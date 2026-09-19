@@ -8,7 +8,7 @@
     "dev": "node --watch index.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "keywords": [
     "takamura",
@@ -22,8 +22,8 @@
   "author": "Takamura Elite",
   "license": "MIT",
   "dependencies": {
-    "@tursodatabase/serverless": "^0.3.0",
-    "express": "^4.19.2",
-    "nodemailer": "^6.9.14"
+    "@tursodatabase/serverless": "^1.4.0",
+    "express": "^5.2.1",
+    "nodemailer": "^10.0.9"
   }
 }
