@@ -24,7 +24,7 @@ const PORT           = process.env.PORT || 3000;   // fourni automatiquement par
 const EMAIL_USER     = 'yhrespon@gmail.com';   // expéditeur vérifié dans Brevo
 // Envoi d'emails via l'API HTTPS de Brevo (Railway bloque le SMTP sur Trial/Hobby/Free).
 // Clé API Brevo : Settings > SMTP & API > API Keys (elle commence par « xkeysib- »).
-const BREVO_API_KEY  = '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';
+const BREVO_API_KEY  = process.env.BREVO_API_KEY;
 const ADMIN_EMAIL    = 'yenohyenoh209@gmail.com';
 const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
