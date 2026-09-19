@@ -11,7 +11,6 @@
    ============================================================================ */
 
 const express    = require('express');
-const nodemailer = require('nodemailer');
 const crypto     = require('crypto');
 const path       = require('path');
 const { promisify } = require('util');
@@ -22,8 +21,10 @@ const scrypt = promisify(crypto.scrypt);
 /* ========================== CONFIG (valeurs en dur) ========================== */
 const PORT           = process.env.PORT || 3000;   // fourni automatiquement par la plupart des hébergeurs
 
-const EMAIL_USER     = 'yenohyenoh209@gmail.com';
-const EMAIL_PASS     = 'nbcg xeen earl irta';
+const EMAIL_USER     = 'yhrespon@gmail.com';   // expéditeur vérifié dans Brevo
+// Envoi d'emails via l'API HTTPS de Brevo (Railway bloque le SMTP sur Trial/Hobby/Free).
+// Clé API Brevo : Settings > SMTP & API > API Keys (elle commence par « xkeysib- »).
+const BREVO_API_KEY  = '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';
 const ADMIN_EMAIL    = 'yenohyenoh209@gmail.com';
 const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
@@ -311,11 +312,34 @@ async function countRows(sql, args) {
 }
 
 /* ========================== MAILER ========================== */
-const mailer = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-});
-const FROM = `"Takamura Elite" <${EMAIL_USER}>`;
+// L'adresse EMAIL_USER doit être ajoutée ET vérifiée comme « expéditeur » dans Brevo
+// (Senders, Domains & Dedicated IPs > Senders).
+async function sendViaBrevo({ to, subject, text, html }) {
+  if (String(BREVO_API_KEY).startsWith('REMPLACER')) {
+    throw new Error('BREVO_API_KEY non renseignée dans index.js');
+  }
+  const payload = {
+    sender: { name: 'Takamura Elite', email: EMAIL_USER },
+    to: [{ email: to }],
+    subject,
+    textContent: text,
+  };
+  if (html) payload.htmlContent = html;
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Brevo ${res.status} : ${detail.slice(0, 300)}`);
+  }
+  return res.json();
+}
+const mailer = { sendMail: sendViaBrevo };   // même appel qu'avant : mailer.sendMail({ to, subject, text, html })
+const FROM = 'Takamura Elite';               // conservé pour compatibilité (ignoré par Brevo)
 
 async function sendVerificationEmail(email, code) {
   const minutes = Math.round(CODE_TTL_MS / 60000);
