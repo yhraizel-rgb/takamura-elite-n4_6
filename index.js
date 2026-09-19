@@ -76,7 +76,28 @@ async function ensureColumn(table, column, definition) {
   catch (_) { /* existe déjà */ }
 }
 
+async function tableColumns(table) {
+  try {
+    const r = await db.execute(`PRAGMA table_info(${table})`);
+    return (r.rows || []).map((x) => String(x.name));
+  } catch (_) { return []; }
+}
+
+// Si une ancienne table « users » (autre schéma : sans password_hash, etc.) existe déjà,
+// on la met de côté (renommée, données conservées) et on repart d'une table propre.
+async function quarantineLegacyUsers() {
+  const cols = await tableColumns('users');
+  if (!cols.length) return; // table absente : sera créée normalement
+  const required = ['id', 'email', 'password_hash', 'created_at'];
+  const missing = required.filter((c) => !cols.includes(c));
+  if (!missing.length) return;
+  const legacy = `users_legacy_${Date.now()}`;
+  console.warn(`[DB] Ancienne table users (colonnes : ${cols.join(', ')}) — manque : ${missing.join(', ')}. Renommée en ${legacy}.`);
+  await db.execute(`ALTER TABLE users RENAME TO ${legacy}`);
+}
+
 async function initDb() {
+  await quarantineLegacyUsers();
   await db.execute(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL,
