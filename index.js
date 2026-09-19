@@ -15,6 +15,8 @@ const crypto     = require('crypto');
 const path       = require('path');
 const { promisify } = require('util');
 const { createClient } = require('@tursodatabase/serverless/compat');
+let Stripe = null;
+try { Stripe = require('stripe'); } catch (_) { /* installé via npm install (voir package.json) */ }
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -159,6 +161,17 @@ async function initDb() {
   await ensureColumn('sessions', 'status', "TEXT NOT NULL DEFAULT 'active'");
   await ensureColumn('sessions', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('sessions', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
+  // Paiement réel (Stripe / CinetPay) : distingue du flux manuel existant.
+  await ensureColumn('sessions', 'gateway', "TEXT NOT NULL DEFAULT 'manual'");
+  await ensureColumn('sessions', 'external_ref', 'TEXT');
+
+  // Paramètres du Dashboard PRO (une seule ligne, JSON) : profil, entreprise,
+  // moyens de paiement, notifications, apparence, produits.
+  await db.execute(`CREATE TABLE IF NOT EXISTS dashboard_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
 
   await ensureColumn('reports', 'user_id', 'INTEGER');
   await ensureColumn('reports', 'case_id', 'TEXT');
@@ -311,6 +324,71 @@ async function countRows(sql, args) {
   return Number(r.rows[0]?.c || 0);
 }
 
+/* ========================== PARAMÈTRES DU DASHBOARD ========================== */
+const DEFAULT_SETTINGS = {
+  profil: { nom: 'Admin', email: ADMIN_EMAIL },
+  entreprise: { nom: 'Takamura Elite', adresse: '', devise: 'FCFA' },
+  paiement: {
+    mode: 'test', // 'test' | 'live'
+    stripe:   { enabled: false, publicKey: '', secretKey: '', webhookSecret: '' },
+    cinetpay: { enabled: false, siteId: '', apiKey: '', secretKey: '', channels: ['MOBILE_MONEY'] },
+    mtn_momo:     { enabled: true },
+    orange_money: { enabled: true },
+    wave:         { enabled: false },
+  },
+  notifications: { email: true, sms: false, webhook: false, webhookUrl: '' },
+  apparence: { theme: 'dark', accent: 'violet', langue: 'FR' },
+  produits: {
+    day:  { label: PLANS.day.label,  price: PLANS.day.price },
+    week: { label: PLANS.week.label, price: PLANS.week.price },
+  },
+};
+
+function deepMerge(base, patch) {
+  if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+    return patch === undefined ? base : patch;
+  }
+  const out = { ...base };
+  for (const k of Object.keys(patch)) {
+    out[k] = deepMerge(base ? base[k] : undefined, patch[k]);
+  }
+  return out;
+}
+
+let settingsCache = null;
+async function getSettings() {
+  if (settingsCache) return settingsCache;
+  const r = await db.execute(`SELECT data FROM dashboard_settings WHERE id = 1`);
+  const row = r.rows && r.rows[0];
+  settingsCache = row ? deepMerge(DEFAULT_SETTINGS, JSON.parse(row.data)) : { ...DEFAULT_SETTINGS };
+  return settingsCache;
+}
+async function saveSettings(patch) {
+  const current = await getSettings();
+  const merged = deepMerge(current, patch);
+  await db.execute({
+    sql: `INSERT INTO dashboard_settings (id, data, updated_at) VALUES (1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    args: [JSON.stringify(merged), Date.now()],
+  });
+  settingsCache = merged;
+  return merged;
+}
+// Prix/labels des plans éventuellement redéfinis depuis les Paramètres > Produits.
+async function getEffectivePlans() {
+  const s = await getSettings();
+  const out = {};
+  for (const key of Object.keys(PLANS)) {
+    const override = s.produits && s.produits[key];
+    out[key] = {
+      ...PLANS[key],
+      label: (override && override.label) || PLANS[key].label,
+      price: (override && Number(override.price) > 0) ? Number(override.price) : PLANS[key].price,
+    };
+  }
+  return out;
+}
+
 /* ========================== MAILER ========================== */
 // L'adresse EMAIL_USER doit être ajoutée ET vérifiée comme « expéditeur » dans Brevo
 // (Senders, Domains & Dedicated IPs > Senders).
@@ -395,6 +473,36 @@ async function sendAdminNotification(info) {
   } catch (e) { console.error('[MAIL admin]', e.message); }
 }
 
+// Active ou rejette une session « pending » — utilisé par /admin, /dashboard
+// (validation manuelle) et par les webhooks Stripe / CinetPay (paiement réel).
+async function decideSession(token, action) {
+  const r = await db.execute({
+    sql: `SELECT s.token, s.plan, s.status, u.email
+          FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
+    args: [token],
+  });
+  const s = r.rows && r.rows[0];
+  if (!s) return { error: 'Session introuvable.', code: 404 };
+  if (s.status !== 'pending') return { error: 'Cette demande a déjà été traitée.', code: 409 };
+
+  if (action === 'reject') {
+    await db.execute({ sql: `UPDATE sessions SET status = 'rejected' WHERE token = ? AND status = 'pending'`, args: [token] });
+    return { ok: true };
+  }
+
+  const plans = await getEffectivePlans();
+  const plan = plans[s.plan];
+  if (!plan) return { error: 'Plan inconnu.', code: 400 };
+  const now = Date.now();
+  const expiresAt = now + plan.durationMs;
+  await db.execute({
+    sql: `UPDATE sessions SET status = 'active', created_at = ?, expires_at = ? WHERE token = ? AND status = 'pending'`,
+    args: [now, expiresAt, token],
+  });
+  if (s.email) sendAccessActivatedEmail(s.email, plan.label, expiresAt).catch(() => {});
+  return { ok: true, expiresAt };
+}
+
 async function sendAccessActivatedEmail(email, planLabel, expiresAt) {
   try {
     await mailer.sendMail({
@@ -424,7 +532,43 @@ app.use((_req, res, next) => {
   });
   next();
 });
+// Le webhook Stripe doit recevoir le corps BRUT (non parsé) pour vérifier la
+// signature — il est donc déclaré avant express.json(), sur son propre chemin.
+app.post('/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const s = await getSettings();
+    const cfg = s.paiement.stripe;
+    if (!cfg.enabled || !cfg.secretKey || !Stripe) return res.status(400).send('Stripe désactivé.');
+    const stripe = new Stripe(cfg.secretKey);
+
+    let event;
+    try {
+      event = cfg.webhookSecret
+        ? stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], cfg.webhookSecret)
+        : JSON.parse(req.body.toString('utf8'));
+    } catch (e) {
+      console.error('[webhook stripe] signature invalide', e.message);
+      return res.status(400).send(`Webhook invalide : ${e.message}`);
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const token = session.metadata && session.metadata.session_token;
+      if (token) {
+        await db.execute({ sql: `UPDATE sessions SET external_ref = ? WHERE token = ?`, args: [session.id, token] });
+        const result = await decideSession(token, 'activate');
+        if (result.error) console.error('[webhook stripe] activation échouée :', result.error);
+      }
+    }
+    res.json({ received: true });
+  } catch (e) {
+    console.error('[webhook stripe]', e);
+    res.status(500).send('Erreur serveur.');
+  }
+});
+
 app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: false, limit: '100kb' })); // notifications CinetPay (x-www-form-urlencoded)
 app.use('/api', limitGlobal);
 
 // index.html est à la racine, à côté de index.js : on ne sert QUE ce fichier
@@ -432,13 +576,30 @@ app.use('/api', limitGlobal);
 const INDEX_HTML = path.join(__dirname, 'index.html');
 app.get(['/', '/index.html'], (_req, res) => res.sendFile(INDEX_HTML));
 
-app.get('/api/config', (_req, res) => {
-  res.json({
-    plans: Object.values(PLANS).map((p) => ({ key: p.key, label: p.label, price: p.price, currency: p.currency })),
-    payment: PAYMENT_INFO,
-    whatsappEmails: WHATSAPP_EMAILS,
-    codeTtlMinutes: Math.round(CODE_TTL_MS / 60000),
-  });
+app.get('/api/config', async (_req, res) => {
+  try {
+    const s = await getSettings();
+    const plans = await getEffectivePlans();
+    const gateways = [];
+    if (s.paiement.stripe.enabled && s.paiement.stripe.publicKey) gateways.push('stripe');
+    if (s.paiement.cinetpay.enabled && s.paiement.cinetpay.siteId) {
+      if (s.paiement.mtn_momo.enabled) gateways.push('mtn_momo');
+      if (s.paiement.orange_money.enabled) gateways.push('orange_money');
+      if (s.paiement.wave.enabled) gateways.push('wave');
+    }
+    res.json({
+      plans: Object.values(plans).map((p) => ({ key: p.key, label: p.label, price: p.price, currency: p.currency })),
+      payment: PAYMENT_INFO,
+      whatsappEmails: WHATSAPP_EMAILS,
+      codeTtlMinutes: Math.round(CODE_TTL_MS / 60000),
+      gateways,          // moyens de paiement réels activés (en plus du virement manuel, toujours dispo)
+      currency: s.entreprise.devise,
+      mode: s.paiement.mode,
+    });
+  } catch (e) {
+    console.error('[config]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
 });
 
 /* ============================================================
@@ -674,6 +835,149 @@ app.post('/api/payment/start', limitPayment, async (req, res) => {
 });
 
 /* ============================================================
+   PAIEMENT RÉEL — Stripe (carte) et CinetPay (MTN MoMo / Orange Money / Wave)
+   Le moyen utilisé dépend des toggles enregistrés dans Paramètres > Paiement.
+   Contrairement au flux manuel ci-dessus (validation admin), l'activation est
+   automatique dès la confirmation du paiement par le webhook du fournisseur.
+   ============================================================ */
+
+app.post('/api/checkout', limitPayment, async (req, res) => {
+  try {
+    const user = await getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'Connectez-vous d\'abord.' });
+    if (!user.verified) return res.status(403).json({ error: 'Compte non vérifié.' });
+
+    const s = await getSettings();
+    const cfg = s.paiement.stripe;
+    if (!cfg.enabled || !cfg.secretKey || !Stripe) return res.status(400).json({ error: 'Le paiement par carte n\'est pas activé.' });
+
+    const plans = await getEffectivePlans();
+    const plan = plans[String(req.body?.plan || '')];
+    if (!plan) return res.status(400).json({ error: 'Plan inconnu.' });
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const now = Date.now();
+    await db.execute({
+      sql: `INSERT INTO sessions
+            (token, user_id, plan, price, payer_name, payer_phone, transaction_ref, status, created_at, expires_at, gateway)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 'stripe')`,
+      args: [token, user.id, plan.key, plan.price, user.email, '', null, now, now + plan.durationMs],
+    });
+
+    const stripe = new Stripe(cfg.secretKey);
+    const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: user.email,
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency: 'usd', // Stripe ne traite pas le FCFA : montant en USD/EUR selon votre configuration Stripe.
+          unit_amount: Math.round(plan.price * 100),
+          product_data: { name: plan.label },
+        },
+      }],
+      metadata: { session_token: token },
+      success_url: `${origin}/?paiement=succes`,
+      cancel_url: `${origin}/?paiement=annule`,
+    });
+
+    await db.execute({ sql: `UPDATE sessions SET external_ref = ? WHERE token = ?`, args: [session.id, token] });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[checkout]', e);
+    res.status(500).json({ error: 'Erreur lors de la création du paiement.' });
+  }
+});
+
+app.post('/api/cinetpay', limitPayment, async (req, res) => {
+  try {
+    const user = await getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'Connectez-vous d\'abord.' });
+    if (!user.verified) return res.status(403).json({ error: 'Compte non vérifié.' });
+
+    const s = await getSettings();
+    const cfg = s.paiement.cinetpay;
+    if (!cfg.enabled || !cfg.siteId || !cfg.apiKey) return res.status(400).json({ error: 'Mobile Money n\'est pas activé.' });
+
+    const plans = await getEffectivePlans();
+    const plan = plans[String(req.body?.plan || '')];
+    if (!plan) return res.status(400).json({ error: 'Plan inconnu.' });
+    const channel = String(req.body?.channel || 'MOBILE_MONEY').toUpperCase(); // MTN, OM, WAVE, MOBILE_MONEY (tous)
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const now = Date.now();
+    await db.execute({
+      sql: `INSERT INTO sessions
+            (token, user_id, plan, price, payer_name, payer_phone, transaction_ref, status, created_at, expires_at, gateway, external_ref)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, 'cinetpay', ?)`,
+      args: [token, user.id, plan.key, plan.price, user.email, '', null, now, now + plan.durationMs, token],
+    });
+
+    const origin = req.get('origin') || `${req.protocol}://${req.get('host')}`;
+    const cpRes = await fetch('https://api-checkout.cinetpay.com/v2/payment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apikey: cfg.apiKey,
+        site_id: cfg.siteId,
+        transaction_id: token,
+        amount: plan.price,
+        currency: s.entreprise.devise === 'FCFA' ? 'XOF' : s.entreprise.devise,
+        description: plan.label,
+        customer_email: user.email,
+        channels: channel,
+        notify_url: `${origin}/webhook/cinetpay`,
+        return_url: `${origin}/?paiement=succes`,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await cpRes.json();
+    if (!cpRes.ok || data.code !== '201') {
+      console.error('[cinetpay init]', data);
+      await db.execute({ sql: `UPDATE sessions SET status = 'rejected' WHERE token = ?`, args: [token] });
+      return res.status(502).json({ error: data.message || 'Échec de l\'initialisation du paiement.' });
+    }
+    res.json({ url: data.data.payment_url });
+  } catch (e) {
+    console.error('[cinetpay]', e);
+    res.status(500).json({ error: 'Erreur lors de la création du paiement.' });
+  }
+});
+
+app.post('/webhook/cinetpay', async (req, res) => {
+  try {
+    const transactionId = String(req.body?.cpm_trans_id || req.body?.transaction_id || '');
+    if (!transactionId) return res.status(400).send('Requête invalide.');
+
+    const s = await getSettings();
+    const cfg = s.paiement.cinetpay;
+    if (!cfg.enabled || !cfg.siteId || !cfg.apiKey) return res.status(400).send('CinetPay désactivé.');
+
+    // On ne fait jamais confiance à la notification seule : on revérifie auprès de CinetPay.
+    const checkRes = await fetch('https://api-checkout.cinetpay.com/v2/payment/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apikey: cfg.apiKey, site_id: cfg.siteId, transaction_id: transactionId }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const check = await checkRes.json();
+    const status = check && check.data && check.data.status;
+
+    if (status === 'ACCEPTED') {
+      const result = await decideSession(transactionId, 'activate');
+      if (result.error) console.error('[webhook cinetpay] activation échouée :', result.error);
+    } else if (status === 'REFUSED') {
+      await decideSession(transactionId, 'reject');
+    }
+    res.status(200).send('ok');
+  } catch (e) {
+    console.error('[webhook cinetpay]', e);
+    res.status(500).send('Erreur serveur.');
+  }
+});
+
+/* ============================================================
    SIGNALEMENT
    ============================================================ */
 
@@ -758,6 +1062,560 @@ function requireAdminXhr(req, res, next) {
 
 const fmtDate = (ms) => (ms ? new Date(Number(ms)).toLocaleString('fr-FR', { timeZone: 'Africa/Douala' }) : '');
 
+/* ============================================================
+   DASHBOARD PRO — HTML (une seule page, servie inline depuis index.js)
+   ============================================================ */
+function DASHBOARD_HTML(nonce) {
+  return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Takamura — Dashboard PRO</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style nonce="${nonce}">
+  :root{
+    --bg:#09090B; --card:#18181B; --card-hover:#1f1f23; --border:#27272A;
+    --violet:#7C3AED; --cyan:#06B6D4; --text:#F4F4F5; --text-dim:#A1A1AA; --text-dim2:#71717A;
+    --green:#22C55E; --red:#EF4444; --amber:#F59E0B;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',ui-sans-serif,system-ui,sans-serif;margin:0;overflow-x:hidden}
+  ::-webkit-scrollbar{width:8px;height:8px} ::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:8px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:18px;transition:.25s}
+  .glow:hover{border-color:rgba(124,58,237,.55);box-shadow:0 0 0 1px rgba(124,58,237,.25),0 12px 40px -12px rgba(124,58,237,.45);transform:translateY(-2px)}
+  .grad-text{background:linear-gradient(90deg,var(--violet),var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .grad-bg{background:linear-gradient(135deg,var(--violet),var(--cyan))}
+  .sidebar-link{display:flex;align-items:center;gap:12px;padding:11px 18px;border-radius:12px;color:var(--text-dim);cursor:pointer;border-left:3px solid transparent;transition:.2s;font-size:14px;font-weight:500}
+  .sidebar-link:hover{background:#1c1c1f;color:var(--text)}
+  .sidebar-link.active{background:linear-gradient(90deg,rgba(124,58,237,.18),rgba(6,182,212,.06));border-left:3px solid var(--violet);color:#fff}
+  .view{animation:fadeIn .35s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .hidden{display:none!important}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--text-dim2);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:10px 14px;border-bottom:1px solid var(--border)}
+  td{padding:12px 14px;border-bottom:1px solid #1f1f23;color:var(--text-dim)}
+  tr:hover td{background:#1c1c1f}
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600}
+  .badge-pending{background:rgba(245,158,11,.12);color:var(--amber)}
+  .badge-active{background:rgba(34,197,94,.12);color:var(--green)}
+  .badge-rejected{background:rgba(239,68,68,.12);color:var(--red)}
+  .btn{padding:7px 14px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:#1c1c1f;color:var(--text);transition:.15s}
+  .btn:hover{border-color:var(--violet)}
+  .btn-primary{background:linear-gradient(135deg,var(--violet),var(--cyan));border:none;color:#fff}
+  .btn-primary:hover{filter:brightness(1.1)}
+  .btn-danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  input[type=text],input[type=email],input[type=password],input[type=number],select,textarea{
+    width:100%;background:#0f0f11;border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-size:13.5px;outline:none;transition:.15s}
+  input:focus,select:focus,textarea:focus{border-color:var(--violet);box-shadow:0 0 0 3px rgba(124,58,237,.15)}
+  label{font-size:12.5px;color:var(--text-dim);font-weight:500;display:block;margin-bottom:6px}
+  .switch{position:relative;width:42px;height:24px;flex-shrink:0}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#3f3f46;border-radius:999px;cursor:pointer;transition:.2s}
+  .slider:before{content:'';position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:linear-gradient(135deg,var(--violet),var(--cyan))}
+  .switch input:checked + .slider:before{transform:translateX(18px)}
+  .tab-btn{padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;color:var(--text-dim);cursor:pointer}
+  .tab-btn.active{background:#1c1c1f;color:#fff;box-shadow:inset 0 0 0 1px var(--violet)}
+  #toast{position:fixed;bottom:24px;right:24px;background:#18181B;border:1px solid var(--violet);border-radius:12px;padding:14px 20px;font-size:13.5px;box-shadow:0 12px 40px -10px rgba(0,0,0,.6);z-index:9999;transition:.3s;transform:translateY(20px);opacity:0}
+  #toast.show{transform:none;opacity:1}
+  .kpi-val{font-size:26px;font-weight:800;letter-spacing:-.02em}
+  .chart-wrap{position:relative;height:280px}
+  .avatar{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff}
+</style>
+</head>
+<body>
+
+<aside style="width:300px;position:fixed;top:0;left:0;height:100vh;background:#0c0c0e;border-right:1px solid var(--border);padding:22px 14px;display:flex;flex-direction:column;gap:4px;overflow-y:auto">
+  <div style="display:flex;align-items:center;gap:10px;padding:8px 10px 22px">
+    <div class="grad-bg" style="width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:#fff">T</div>
+    <div>
+      <div style="font-weight:800;font-size:15px">Takamura</div>
+      <div style="font-size:11px;color:var(--text-dim2)">Dashboard PRO</div>
+    </div>
+  </div>
+  <div class="sidebar-link active" data-view="dashboard">📊 <span>Dashboard</span></div>
+  <div class="sidebar-link" data-view="orders">💳 <span>Commandes / Paiements</span></div>
+  <div class="sidebar-link" data-view="clients">👥 <span>Clients</span></div>
+  <div class="sidebar-link" data-view="products">📦 <span>Produits / Formations</span></div>
+  <div class="sidebar-link" data-view="analytics">📈 <span>Analytics</span></div>
+  <div class="sidebar-link" data-view="settings">⚙️ <span>Paramètres</span></div>
+  <div style="margin-top:auto;padding:14px 10px 4px;border-top:1px solid var(--border);font-size:11px;color:var(--text-dim2)">
+    Takamura Elite © ${new Date().getFullYear()}
+  </div>
+</aside>
+
+<main style="margin-left:300px;padding:32px 36px;max-width:1500px">
+
+  <section id="view-dashboard" class="view">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Vue d'ensemble</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 24px">Revenus, commandes et activité en temps réel.</p>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:24px" id="kpiRow"></div>
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
+      <div class="card glow" style="padding:22px">
+        <div style="font-weight:700;margin-bottom:14px">Revenus (accès activés)</div>
+        <div class="chart-wrap"><canvas id="chartRevenue"></canvas></div>
+      </div>
+      <div class="card glow" style="padding:22px">
+        <div style="font-weight:700;margin-bottom:14px">Commandes par statut</div>
+        <div class="chart-wrap"><canvas id="chartStatus"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-orders" class="view hidden">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Commandes &amp; Paiements</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 20px">Virement manuel + paiements automatiques Stripe / CinetPay.</p>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <select id="orderFilterStatus" style="width:180px">
+        <option value="">Tous les statuts</option>
+        <option value="pending">En attente</option>
+        <option value="active">Payé</option>
+        <option value="rejected">Échoué / rejeté</option>
+      </select>
+      <input type="text" id="orderSearch" placeholder="Rechercher email, nom, téléphone, référence…" style="max-width:320px">
+      <button class="btn" id="orderRefresh">↻ Actualiser</button>
+    </div>
+    <div class="card" style="padding:0;overflow-x:auto">
+      <table><thead><tr>
+        <th>Date</th><th>Client</th><th>Produit</th><th>Prix</th><th>Moyen</th><th>Référence</th><th>Statut</th><th>Action</th>
+      </tr></thead><tbody id="ordersBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="view-clients" class="view hidden">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Clients</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 20px">Comptes inscrits, dépenses et accès en cours.</p>
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
+      <div class="card" style="padding:0;overflow-x:auto">
+        <div style="padding:16px"><input type="text" id="clientSearch" placeholder="Rechercher un email…" style="max-width:320px"></div>
+        <table><thead><tr><th>Client</th><th>Inscrit le</th><th>Vérifié</th><th>Accès</th><th>Signalements</th><th>Total dépensé</th></tr></thead>
+        <tbody id="clientsBody"></tbody></table>
+      </div>
+      <div class="card glow" style="padding:22px">
+        <div style="font-weight:700;margin-bottom:14px">Répartition des accès</div>
+        <div class="chart-wrap"><canvas id="chartClients"></canvas></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-products" class="view hidden">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Produits / Formations</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 20px">Les deux formules d'accès vendues sur le site public.</p>
+    <div id="productsGrid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:18px"></div>
+  </section>
+
+  <section id="view-analytics" class="view hidden">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Analytics</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 20px">Vue détaillée sur 30 jours.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div class="card glow" style="padding:22px"><div style="font-weight:700;margin-bottom:14px">Revenus / jour</div><div class="chart-wrap"><canvas id="an1"></canvas></div></div>
+      <div class="card glow" style="padding:22px"><div style="font-weight:700;margin-bottom:14px">Commandes / jour</div><div class="chart-wrap"><canvas id="an2"></canvas></div></div>
+      <div class="card glow" style="padding:22px"><div style="font-weight:700;margin-bottom:14px">Signalements / jour</div><div class="chart-wrap"><canvas id="an3"></canvas></div></div>
+      <div class="card glow" style="padding:22px"><div style="font-weight:700;margin-bottom:14px">Signalements par catégorie</div><div class="chart-wrap"><canvas id="an4"></canvas></div></div>
+    </div>
+  </section>
+
+  <section id="view-settings" class="view hidden">
+    <h1 style="font-size:24px;font-weight:800;margin:0 0 4px">Paramètres</h1>
+    <p style="color:var(--text-dim2);font-size:13.5px;margin:0 0 20px">Profil, entreprise, paiement, notifications, apparence, facturation.</p>
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap" id="settingsTabs">
+      <div class="tab-btn active" data-tab="profil">Profil</div>
+      <div class="tab-btn" data-tab="entreprise">Entreprise</div>
+      <div class="tab-btn" data-tab="paiement">Paiement</div>
+      <div class="tab-btn" data-tab="notifications">Notifications</div>
+      <div class="tab-btn" data-tab="apparence">Apparence</div>
+      <div class="tab-btn" data-tab="facturation">Facturation</div>
+    </div>
+
+    <div class="card glow" style="padding:26px;max-width:720px" id="settings-profil">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+        <img id="profilPreview" src="" class="hidden" style="width:64px;height:64px;border-radius:16px;object-fit:cover">
+        <div id="profilAvatarFallback" class="avatar grad-bg" style="width:64px;height:64px;border-radius:16px;font-size:22px">A</div>
+        <div><input type="file" id="profilPhoto" accept="image/*"></div>
+      </div>
+      <div style="display:grid;gap:14px">
+        <div><label>Nom</label><input type="text" id="profilNom"></div>
+        <div><label>Email</label><input type="email" id="profilEmail"></div>
+        <div><label>Nouveau mot de passe</label><input type="password" id="profilPassword" placeholder="Laisser vide pour ne pas changer"></div>
+        <button class="btn btn-primary" data-save="profil" style="width:fit-content">Enregistrer</button>
+      </div>
+    </div>
+
+    <div class="card glow hidden" style="padding:26px;max-width:720px" id="settings-entreprise">
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+        <img id="logoPreview" src="" class="hidden" style="width:64px;height:64px;border-radius:16px;object-fit:cover;background:#0f0f11">
+        <div id="logoFallback" class="avatar grad-bg" style="width:64px;height:64px;border-radius:16px;font-size:22px">E</div>
+        <div><input type="file" id="entLogo" accept="image/*"></div>
+      </div>
+      <div style="display:grid;gap:14px">
+        <div><label>Nom de l'entreprise</label><input type="text" id="entNom"></div>
+        <div><label>Adresse</label><input type="text" id="entAdresse"></div>
+        <div><label>Devise</label>
+          <select id="entDevise"><option value="FCFA">FCFA</option><option value="EUR">EUR</option><option value="USD">USD</option></select>
+        </div>
+        <button class="btn btn-primary" data-save="entreprise" style="width:fit-content">Enregistrer</button>
+      </div>
+    </div>
+
+    <div class="card glow hidden" style="padding:26px;max-width:760px" id="settings-paiement">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding:14px;background:#0f0f11;border-radius:12px">
+        <div><div style="font-weight:600">Mode</div><div style="font-size:12px;color:var(--text-dim2)">Test = simulation, Live = paiements réels</div></div>
+        <select id="payMode" style="width:140px"><option value="test">Test</option><option value="live">Live</option></select>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-weight:700">Stripe (carte bancaire)</div>
+        <label class="switch"><input type="checkbox" id="stripeEnabled"><span class="slider"></span></label>
+      </div>
+      <div style="display:grid;gap:12px;margin-bottom:24px">
+        <div><label>Clé publique (pk_...)</label><input type="text" id="stripePublicKey"></div>
+        <div><label>Clé secrète (sk_...)</label><input type="password" id="stripeSecretKey"></div>
+        <div><label>Secret webhook (whsec_...)</label><input type="password" id="stripeWebhookSecret"></div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="font-weight:700">CinetPay (Mobile Money)</div>
+        <label class="switch"><input type="checkbox" id="cinetpayEnabled"><span class="slider"></span></label>
+      </div>
+      <div style="display:grid;gap:12px;margin-bottom:20px">
+        <div><label>Site ID</label><input type="text" id="cinetpaySiteId"></div>
+        <div><label>Clé API</label><input type="password" id="cinetpayApiKey"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+        <div class="card" style="padding:12px;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:13px">MTN MoMo</span><label class="switch"><input type="checkbox" id="mtnEnabled"><span class="slider"></span></label>
+        </div>
+        <div class="card" style="padding:12px;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:13px">Orange Money</span><label class="switch"><input type="checkbox" id="omEnabled"><span class="slider"></span></label>
+        </div>
+        <div class="card" style="padding:12px;display:flex;align-items:center;justify-content:space-between">
+          <span style="font-size:13px">Wave</span><label class="switch"><input type="checkbox" id="waveEnabled"><span class="slider"></span></label>
+        </div>
+      </div>
+      <button class="btn btn-primary" data-save="paiement" style="width:fit-content">Enregistrer</button>
+    </div>
+
+    <div class="card glow hidden" style="padding:26px;max-width:560px" id="settings-notifications">
+      <div style="display:grid;gap:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><span>Notifications par e-mail</span><label class="switch"><input type="checkbox" id="notifEmail"><span class="slider"></span></label></div>
+        <div style="display:flex;align-items:center;justify-content:space-between"><span>Notifications par SMS</span><label class="switch"><input type="checkbox" id="notifSms"><span class="slider"></span></label></div>
+        <div style="display:flex;align-items:center;justify-content:space-between"><span>Webhook sortant</span><label class="switch"><input type="checkbox" id="notifWebhook"><span class="slider"></span></label></div>
+        <div><label>URL du webhook</label><input type="text" id="notifWebhookUrl" placeholder="https://..."></div>
+        <button class="btn btn-primary" data-save="notifications" style="width:fit-content">Enregistrer</button>
+      </div>
+    </div>
+
+    <div class="card glow hidden" style="padding:26px;max-width:560px" id="settings-apparence">
+      <div style="display:grid;gap:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><span>Thème sombre</span><label class="switch"><input type="checkbox" id="apThemeDark" checked disabled><span class="slider"></span></label></div>
+        <div><label>Couleur d'accent</label>
+          <select id="apAccent"><option value="violet">Violet</option><option value="bleu">Bleu</option><option value="vert">Vert</option></select>
+        </div>
+        <div><label>Langue</label>
+          <select id="apLangue"><option value="FR">Français</option><option value="EN">English</option></select>
+        </div>
+        <button class="btn btn-primary" data-save="apparence" style="width:fit-content">Enregistrer</button>
+      </div>
+    </div>
+
+    <div class="card glow hidden" style="padding:26px;max-width:560px" id="settings-facturation">
+      <div style="margin-bottom:18px">
+        <div style="font-weight:700;margin-bottom:6px">Plan actuel : <span class="grad-text">Elite</span></div>
+        <div style="font-size:12.5px;color:var(--text-dim2);margin-bottom:10px">Utilisation du mois — signalements envoyés</div>
+        <div style="height:8px;background:#0f0f11;border-radius:999px;overflow:hidden">
+          <div id="usageBar" class="grad-bg" style="height:100%;width:0%"></div>
+        </div>
+        <div id="usageLabel" style="font-size:11px;color:var(--text-dim2);margin-top:6px"></div>
+      </div>
+      <button class="btn btn-primary">Mettre à niveau</button>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+
+<script nonce="${nonce}">
+(function(){
+  "use strict";
+  var CURRENCY = "FCFA";
+
+  function toast(msg){
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(function(){ t.classList.remove("show"); }, 2600);
+  }
+
+  function api(url, opts){
+    opts = opts || {};
+    var headers = Object.assign({}, opts.headers || {});
+    if (opts.method && opts.method !== "GET") headers["X-Requested-With"] = "takamura-admin";
+    if (opts.body && typeof opts.body !== "string") { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.body); }
+    return fetch(url, Object.assign({}, opts, { headers: headers })).then(function(r){
+      return r.json().then(function(data){
+        if (!r.ok) throw new Error(data.error || "Erreur serveur");
+        return data;
+      });
+    });
+  }
+
+  function fmtMoney(n){ return Number(n || 0).toLocaleString("fr-FR") + " " + CURRENCY; }
+
+  /* ---------- Navigation ---------- */
+  var views = ["dashboard","orders","clients","products","analytics","settings"];
+  document.querySelectorAll(".sidebar-link").forEach(function(el){
+    el.addEventListener("click", function(){
+      document.querySelectorAll(".sidebar-link").forEach(function(x){ x.classList.remove("active"); });
+      el.classList.add("active");
+      var v = el.getAttribute("data-view");
+      views.forEach(function(name){
+        document.getElementById("view-" + name).classList.toggle("hidden", name !== v);
+      });
+      if (v === "dashboard") loadOverview();
+      if (v === "orders") loadOrders();
+      if (v === "clients") loadClients();
+      if (v === "products") loadProducts();
+      if (v === "analytics") loadAnalytics();
+      if (v === "settings") loadSettings();
+    });
+  });
+
+  /* ---------- Dashboard ---------- */
+  var chartRevenue, chartStatus;
+  function loadOverview(){
+    api("/dashboard/api/overview").then(function(d){
+      CURRENCY = d.currency || "FCFA";
+      var kpis = [
+        { label: "Revenu total", val: fmtMoney(d.totalRevenue) },
+        { label: "Commandes", val: d.totalOrders },
+        { label: "Clients", val: d.totalClients },
+        { label: "Signalements", val: d.totalReports },
+      ];
+      document.getElementById("kpiRow").innerHTML = kpis.map(function(k){
+        return '<div class="card glow" style="padding:20px"><div style="font-size:12px;color:var(--text-dim2);margin-bottom:8px">' + k.label + '</div><div class="kpi-val grad-text">' + k.val + '</div></div>';
+      }).join("");
+
+      var ctx1 = document.getElementById("chartRevenue").getContext("2d");
+      var grad = ctx1.createLinearGradient(0,0,0,260);
+      grad.addColorStop(0, "rgba(124,58,237,.45)"); grad.addColorStop(1, "rgba(6,182,212,.02)");
+      if (chartRevenue) chartRevenue.destroy();
+      chartRevenue = new Chart(ctx1, {
+        type: "line",
+        data: { labels: d.revenueSeries.map(function(x){return x.date;}), datasets: [{
+          data: d.revenueSeries.map(function(x){return x.total;}), borderColor: "#7C3AED", backgroundColor: grad, fill: true, tension: .35, pointRadius: 0, borderWidth: 2.5,
+        }]},
+        options: { plugins: { legend: { display:false } }, scales: { x: { grid:{color:"#1f1f23"}, ticks:{color:"#71717A"} }, y: { grid:{color:"#1f1f23"}, ticks:{color:"#71717A"} } } }
+      });
+
+      var ctx2 = document.getElementById("chartStatus").getContext("2d");
+      if (chartStatus) chartStatus.destroy();
+      var s = d.ordersByStatus || {};
+      chartStatus = new Chart(ctx2, {
+        type: "doughnut",
+        data: { labels: ["Payé","En attente","Rejeté"], datasets: [{ data: [s.active||0, s.pending||0, s.rejected||0], backgroundColor: ["#22C55E","#F59E0B","#EF4444"], borderWidth:0 }] },
+        options: { plugins: { legend: { position:"bottom", labels:{ color:"#A1A1AA" } } }, cutout: "70%" }
+      });
+    }).catch(function(e){ toast(e.message); });
+  }
+
+  /* ---------- Commandes ---------- */
+  function badge(status){
+    var map = { pending: ["badge-pending","En attente"], active: ["badge-active","Payé"], rejected: ["badge-rejected","Rejeté"] };
+    var m = map[status] || ["badge-pending", status];
+    return '<span class="badge ' + m[0] + '">' + m[1] + '</span>';
+  }
+  function loadOrders(){
+    var status = document.getElementById("orderFilterStatus").value;
+    var search = document.getElementById("orderSearch").value;
+    var qs = new URLSearchParams({ status: status, search: search }).toString();
+    api("/dashboard/api/orders?" + qs).then(function(d){
+      document.getElementById("ordersBody").innerHTML = d.orders.map(function(o){
+        var actions = o.status === "pending"
+          ? '<button class="btn" data-act="activate" data-token="' + o.token + '">Valider</button> <button class="btn btn-danger" data-act="reject" data-token="' + o.token + '">Rejeter</button>'
+          : "—";
+        return "<tr><td>" + new Date(o.created_at).toLocaleString("fr-FR") + "</td><td>" + (o.email||"—") + "</td><td>" + o.plan + "</td><td>" + fmtMoney(o.price) + "</td><td>" + o.gateway + "</td><td>" + (o.transaction_ref||"—") + "</td><td>" + badge(o.status) + "</td><td>" + actions + "</td></tr>";
+      }).join("") || '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-dim2)">Aucune commande.</td></tr>';
+    }).catch(function(e){ toast(e.message); });
+  }
+  document.getElementById("orderRefresh").addEventListener("click", loadOrders);
+  document.getElementById("orderFilterStatus").addEventListener("change", loadOrders);
+  var searchTimer;
+  document.getElementById("orderSearch").addEventListener("input", function(){ clearTimeout(searchTimer); searchTimer = setTimeout(loadOrders, 300); });
+  document.getElementById("ordersBody").addEventListener("click", function(e){
+    var b = e.target.closest("button[data-act]");
+    if (!b) return;
+    if (b.dataset.act === "reject" && !confirm("Rejeter cette commande ?")) return;
+    b.disabled = true;
+    api("/dashboard/api/orders/decision", { method:"POST", body:{ token: b.dataset.token, action: b.dataset.act } })
+      .then(function(){ toast("Commande mise à jour."); loadOrders(); loadOverview(); })
+      .catch(function(err){ toast(err.message); b.disabled = false; });
+  });
+
+  /* ---------- Clients ---------- */
+  var chartClients;
+  function loadClients(){
+    var search = document.getElementById("clientSearch").value;
+    api("/dashboard/api/clients?" + new URLSearchParams({ search: search }).toString()).then(function(d){
+      document.getElementById("clientsBody").innerHTML = d.clients.map(function(c){
+        return "<tr><td>" + c.email + "</td><td>" + new Date(c.created_at).toLocaleDateString("fr-FR") + "</td><td>" + (c.verified ? "✅" : "❌") + "</td><td>" + (c.access_status ? badge("active") : badge("rejected")) + "</td><td>" + c.reports_count + "</td><td>" + fmtMoney(c.total_spent) + "</td></tr>";
+      }).join("") || '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-dim2)">Aucun client.</td></tr>';
+
+      var withAccess = d.clients.filter(function(c){ return c.access_status; }).length;
+      var ctx = document.getElementById("chartClients").getContext("2d");
+      if (chartClients) chartClients.destroy();
+      chartClients = new Chart(ctx, {
+        type: "doughnut",
+        data: { labels: ["Accès actif","Sans accès"], datasets: [{ data: [withAccess, d.clients.length - withAccess], backgroundColor: ["#06B6D4","#3f3f46"], borderWidth:0 }] },
+        options: { plugins: { legend: { position:"bottom", labels:{ color:"#A1A1AA" } } }, cutout: "70%" }
+      });
+    }).catch(function(e){ toast(e.message); });
+  }
+  var clientTimer;
+  document.getElementById("clientSearch").addEventListener("input", function(){ clearTimeout(clientTimer); clientTimer = setTimeout(loadClients, 300); });
+
+  /* ---------- Produits ---------- */
+  function loadProducts(){
+    api("/dashboard/api/products").then(function(d){
+      document.getElementById("productsGrid").innerHTML = d.products.map(function(p){
+        return '<div class="card glow" style="padding:22px">' +
+          '<div style="font-weight:700;margin-bottom:14px">' + p.key + '</div>' +
+          '<div style="display:grid;gap:12px">' +
+          '<div><label>Nom</label><input type="text" data-field="label" data-key="' + p.key + '" value="' + p.label + '"></div>' +
+          '<div><label>Prix (' + CURRENCY + ')</label><input type="number" data-field="price" data-key="' + p.key + '" value="' + p.price + '"></div>' +
+          '<button class="btn btn-primary" data-save-product="' + p.key + '" style="width:fit-content">Enregistrer</button>' +
+          '</div></div>';
+      }).join("");
+      document.querySelectorAll("[data-save-product]").forEach(function(btn){
+        btn.addEventListener("click", function(){
+          var key = btn.getAttribute("data-save-product");
+          var label = document.querySelector('[data-field="label"][data-key="' + key + '"]').value;
+          var price = document.querySelector('[data-field="price"][data-key="' + key + '"]').value;
+          api("/dashboard/api/products", { method:"POST", body:{ key:key, label:label, price:price } })
+            .then(function(){ toast("Produit mis à jour."); })
+            .catch(function(e){ toast(e.message); });
+        });
+      });
+    }).catch(function(e){ toast(e.message); });
+  }
+
+  /* ---------- Analytics ---------- */
+  var anCharts = [];
+  function lineChart(id, labels, data, color){
+    var ctx = document.getElementById(id).getContext("2d");
+    return new Chart(ctx, { type:"line", data:{ labels:labels, datasets:[{ data:data, borderColor:color, backgroundColor:"transparent", tension:.35, pointRadius:0, borderWidth:2.5 }]},
+      options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{color:"#1f1f23"},ticks:{color:"#71717A"}}, y:{grid:{color:"#1f1f23"},ticks:{color:"#71717A"}} } } });
+  }
+  function barChart(id, labels, data, color){
+    var ctx = document.getElementById(id).getContext("2d");
+    return new Chart(ctx, { type:"bar", data:{ labels:labels, datasets:[{ data:data, backgroundColor:color, borderRadius:6 }]},
+      options:{ plugins:{legend:{display:false}}, scales:{ x:{grid:{display:false},ticks:{color:"#71717A"}}, y:{grid:{color:"#1f1f23"},ticks:{color:"#71717A"}} } } });
+  }
+  function loadAnalytics(){
+    anCharts.forEach(function(c){ c.destroy(); }); anCharts = [];
+    api("/dashboard/api/analytics").then(function(d){
+      anCharts.push(lineChart("an1", d.revenueByDay.map(function(x){return x.date;}), d.revenueByDay.map(function(x){return x.value;}), "#7C3AED"));
+      anCharts.push(barChart("an2", d.ordersByDay.map(function(x){return x.date;}), d.ordersByDay.map(function(x){return x.value;}), "#06B6D4"));
+      anCharts.push(lineChart("an3", d.reportsByDay.map(function(x){return x.date;}), d.reportsByDay.map(function(x){return x.value;}), "#F59E0B"));
+      var ctx4 = document.getElementById("an4").getContext("2d");
+      anCharts.push(new Chart(ctx4, { type:"doughnut", data:{ labels: d.reportsByCategory.map(function(x){return x.category;}), datasets:[{ data: d.reportsByCategory.map(function(x){return x.count;}), backgroundColor:["#7C3AED","#06B6D4","#F59E0B","#22C55E","#EF4444"], borderWidth:0 }]}, options:{ plugins:{legend:{position:"bottom",labels:{color:"#A1A1AA"}}}, cutout:"65%" } }));
+    }).catch(function(e){ toast(e.message); });
+  }
+
+  /* ---------- Paramètres ---------- */
+  var currentSettings = null;
+  document.getElementById("settingsTabs").addEventListener("click", function(e){
+    var t = e.target.closest(".tab-btn"); if (!t) return;
+    document.querySelectorAll("#settingsTabs .tab-btn").forEach(function(x){ x.classList.remove("active"); });
+    t.classList.add("active");
+    ["profil","entreprise","paiement","notifications","apparence","facturation"].forEach(function(name){
+      document.getElementById("settings-" + name).classList.toggle("hidden", name !== t.getAttribute("data-tab"));
+    });
+  });
+
+  function fillSettingsForm(s){
+    currentSettings = s;
+    CURRENCY = s.entreprise.devise;
+    document.getElementById("profilNom").value = s.profil.nom || "";
+    document.getElementById("profilEmail").value = s.profil.email || "";
+    document.getElementById("entNom").value = s.entreprise.nom || "";
+    document.getElementById("entAdresse").value = s.entreprise.adresse || "";
+    document.getElementById("entDevise").value = s.entreprise.devise || "FCFA";
+    document.getElementById("payMode").value = s.paiement.mode || "test";
+    document.getElementById("stripeEnabled").checked = !!s.paiement.stripe.enabled;
+    document.getElementById("stripePublicKey").value = s.paiement.stripe.publicKey || "";
+    document.getElementById("stripeSecretKey").value = s.paiement.stripe.secretKey || "";
+    document.getElementById("stripeWebhookSecret").value = s.paiement.stripe.webhookSecret || "";
+    document.getElementById("cinetpayEnabled").checked = !!s.paiement.cinetpay.enabled;
+    document.getElementById("cinetpaySiteId").value = s.paiement.cinetpay.siteId || "";
+    document.getElementById("cinetpayApiKey").value = s.paiement.cinetpay.apiKey || "";
+    document.getElementById("mtnEnabled").checked = !!s.paiement.mtn_momo.enabled;
+    document.getElementById("omEnabled").checked = !!s.paiement.orange_money.enabled;
+    document.getElementById("waveEnabled").checked = !!s.paiement.wave.enabled;
+    document.getElementById("notifEmail").checked = !!s.notifications.email;
+    document.getElementById("notifSms").checked = !!s.notifications.sms;
+    document.getElementById("notifWebhook").checked = !!s.notifications.webhook;
+    document.getElementById("notifWebhookUrl").value = s.notifications.webhookUrl || "";
+    document.getElementById("apAccent").value = s.apparence.accent || "violet";
+    document.getElementById("apLangue").value = s.apparence.langue || "FR";
+  }
+
+  function loadSettings(){
+    api("/dashboard/api/settings").then(function(d){ fillSettingsForm(d.settings); }).catch(function(e){ toast(e.message); });
+    api("/dashboard/api/overview").then(function(d){
+      var used = d.totalReports || 0, cap = 600;
+      document.getElementById("usageBar").style.width = Math.min(100, (used/cap)*100) + "%";
+      document.getElementById("usageLabel").textContent = used + " / " + cap + " signalements ce mois";
+    }).catch(function(){});
+  }
+
+  function collectPatch(section){
+    if (section === "profil") return { profil: { nom: document.getElementById("profilNom").value, email: document.getElementById("profilEmail").value } };
+    if (section === "entreprise") return { entreprise: { nom: document.getElementById("entNom").value, adresse: document.getElementById("entAdresse").value, devise: document.getElementById("entDevise").value } };
+    if (section === "paiement") return { paiement: {
+      mode: document.getElementById("payMode").value,
+      stripe: { enabled: document.getElementById("stripeEnabled").checked, publicKey: document.getElementById("stripePublicKey").value, secretKey: document.getElementById("stripeSecretKey").value, webhookSecret: document.getElementById("stripeWebhookSecret").value },
+      cinetpay: { enabled: document.getElementById("cinetpayEnabled").checked, siteId: document.getElementById("cinetpaySiteId").value, apiKey: document.getElementById("cinetpayApiKey").value },
+      mtn_momo: { enabled: document.getElementById("mtnEnabled").checked },
+      orange_money: { enabled: document.getElementById("omEnabled").checked },
+      wave: { enabled: document.getElementById("waveEnabled").checked },
+    }};
+    if (section === "notifications") return { notifications: { email: document.getElementById("notifEmail").checked, sms: document.getElementById("notifSms").checked, webhook: document.getElementById("notifWebhook").checked, webhookUrl: document.getElementById("notifWebhookUrl").value } };
+    if (section === "apparence") return { apparence: { accent: document.getElementById("apAccent").value, langue: document.getElementById("apLangue").value, theme: "dark" } };
+    return {};
+  }
+  document.querySelectorAll("[data-save]").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var section = btn.getAttribute("data-save");
+      api("/dashboard/api/settings", { method:"POST", body: collectPatch(section) })
+        .then(function(d){ fillSettingsForm(d.settings); toast("Paramètre enregistré."); })
+        .catch(function(e){ toast(e.message); });
+    });
+  });
+
+  ["profilPhoto","entLogo"].forEach(function(id){
+    document.getElementById(id).addEventListener("change", function(e){
+      var f = e.target.files[0]; if (!f) return;
+      var reader = new FileReader();
+      var isProfil = id === "profilPhoto";
+      reader.onload = function(){
+        var img = document.getElementById(isProfil ? "profilPreview" : "logoPreview");
+        var fallback = document.getElementById(isProfil ? "profilAvatarFallback" : "logoFallback");
+        img.src = reader.result; img.classList.remove("hidden"); fallback.classList.add("hidden");
+      };
+      reader.readAsDataURL(f);
+    });
+  });
+
+  loadOverview();
+})();
+</script>
+</body>
+</html>`;
+}
+
 app.get('/admin', limitAdmin, adminAuth, async (_req, res) => {
   try {
     const [u, s, r] = await Promise.all([
@@ -838,34 +1696,213 @@ app.post('/admin/sessions/decision', limitAdmin, adminAuth, requireAdminXhr, asy
     const action = String(req.body?.action || '');
     if (!token || !['activate', 'reject'].includes(action)) return res.status(400).json({ error: 'Requête invalide.' });
 
-    const r = await db.execute({
-      sql: `SELECT s.token, s.plan, s.status, u.email
-            FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
-      args: [token],
-    });
-    const s = r.rows && r.rows[0];
-    if (!s) return res.status(404).json({ error: 'Session introuvable.' });
-    if (s.status !== 'pending') return res.status(409).json({ error: 'Cette demande a déjà été traitée.' });
-
-    if (action === 'reject') {
-      await db.execute({ sql: `UPDATE sessions SET status = 'rejected' WHERE token = ? AND status = 'pending'`, args: [token] });
-      return res.json({ ok: true });
-    }
-
-    const plan = PLANS[s.plan];
-    if (!plan) return res.status(400).json({ error: 'Plan inconnu.' });
-    const now = Date.now();
-    const expiresAt = now + plan.durationMs;
-    await db.execute({
-      sql: `UPDATE sessions SET status = 'active', created_at = ?, expires_at = ? WHERE token = ? AND status = 'pending'`,
-      args: [now, expiresAt, token],
-    });
-    if (s.email) sendAccessActivatedEmail(s.email, plan.label, expiresAt).catch(() => {});
-    res.json({ ok: true, expiresAt });
+    const result = await decideSession(token, action);
+    if (result.error) return res.status(result.code || 400).json({ error: result.error });
+    res.json(result);
   } catch (e) {
     console.error('[admin decision]', e);
     res.status(500).json({ error: 'Erreur serveur.' });
   }
+});
+
+/* ============================================================
+   DASHBOARD PRO — API (mêmes identifiants admin que /admin)
+   ============================================================ */
+
+function dayKey(ms) {
+  return new Date(Number(ms)).toISOString().slice(0, 10);
+}
+
+app.get('/dashboard/api/overview', limitAdmin, adminAuth, async (_req, res) => {
+  try {
+    const plans = await getEffectivePlans();
+    const [sessions, users, reports] = await Promise.all([
+      db.execute(`SELECT plan, price, status, created_at FROM sessions ORDER BY created_at ASC`),
+      countRows(`SELECT COUNT(*) AS c FROM users`, []),
+      countRows(`SELECT COUNT(*) AS c FROM reports`, []),
+    ]);
+
+    const byDay = new Map();
+    const byStatus = { pending: 0, active: 0, rejected: 0 };
+    const byPlan = {};
+    let totalRevenue = 0;
+
+    for (const s of sessions.rows) {
+      byStatus[s.status] = (byStatus[s.status] || 0) + 1;
+      byPlan[s.plan] = (byPlan[s.plan] || 0) + 1;
+      if (s.status === 'active') {
+        totalRevenue += Number(s.price) || 0;
+        const k = dayKey(s.created_at);
+        byDay.set(k, (byDay.get(k) || 0) + Number(s.price));
+      }
+    }
+
+    const revenueSeries = [...byDay.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, total]) => ({ date, total }));
+    const planBreakdown = Object.keys(byPlan).map((key) => ({
+      key, label: (plans[key] && plans[key].label) || key, count: byPlan[key],
+    }));
+
+    res.json({
+      totalRevenue,
+      totalOrders: sessions.rows.length,
+      totalClients: users,
+      totalReports: reports,
+      ordersByStatus: byStatus,
+      revenueSeries,
+      planBreakdown,
+      currency: (await getSettings()).entreprise.devise,
+    });
+  } catch (e) {
+    console.error('[dashboard overview]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard/api/analytics', limitAdmin, adminAuth, async (_req, res) => {
+  try {
+    const [sessions, reports] = await Promise.all([
+      db.execute(`SELECT plan, price, status, created_at FROM sessions ORDER BY created_at ASC`),
+      db.execute(`SELECT category, created_at FROM reports ORDER BY created_at ASC`),
+    ]);
+
+    const revenueByDay = new Map();
+    const ordersByDay = new Map();
+    for (const s of sessions.rows) {
+      const k = dayKey(s.created_at);
+      ordersByDay.set(k, (ordersByDay.get(k) || 0) + 1);
+      if (s.status === 'active') revenueByDay.set(k, (revenueByDay.get(k) || 0) + Number(s.price));
+    }
+    const reportsByCategory = {};
+    const reportsByDay = new Map();
+    for (const r of reports.rows) {
+      reportsByCategory[r.category] = (reportsByCategory[r.category] || 0) + 1;
+      const k = dayKey(r.created_at);
+      reportsByDay.set(k, (reportsByDay.get(k) || 0) + 1);
+    }
+
+    const toSeries = (m) => [...m.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, v]) => ({ date, value: v }));
+
+    res.json({
+      revenueByDay: toSeries(revenueByDay),
+      ordersByDay: toSeries(ordersByDay),
+      reportsByDay: toSeries(reportsByDay),
+      reportsByCategory: Object.entries(reportsByCategory).map(([category, count]) => ({ category, count })),
+    });
+  } catch (e) {
+    console.error('[dashboard analytics]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard/api/orders', limitAdmin, adminAuth, async (req, res) => {
+  try {
+    const status = String(req.query.status || '');
+    const search = String(req.query.search || '').trim();
+    const where = [];
+    const args = [];
+    if (status && ['pending', 'active', 'rejected'].includes(status)) { where.push('s.status = ?'); args.push(status); }
+    if (search) {
+      where.push('(u.email LIKE ? OR s.payer_name LIKE ? OR s.payer_phone LIKE ? OR s.transaction_ref LIKE ?)');
+      args.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const sql = `SELECT s.token, s.plan, s.price, s.payer_name, s.payer_phone, s.transaction_ref,
+                        s.status, s.gateway, s.created_at, s.expires_at, u.email
+                 FROM sessions s LEFT JOIN users u ON u.id = s.user_id
+                 ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                 ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END, s.created_at DESC LIMIT 300`;
+    const r = await db.execute({ sql, args });
+    res.json({ orders: r.rows });
+  } catch (e) {
+    console.error('[dashboard orders]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.post('/dashboard/api/orders/decision', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const action = String(req.body?.action || '');
+    if (!token || !['activate', 'reject'].includes(action)) return res.status(400).json({ error: 'Requête invalide.' });
+    const result = await decideSession(token, action);
+    if (result.error) return res.status(result.code || 400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    console.error('[dashboard orders decision]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard/api/clients', limitAdmin, adminAuth, async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const sql = `SELECT u.id, u.email, u.verified, u.created_at,
+                        (SELECT COUNT(*) FROM reports r WHERE r.user_id = u.id) AS reports_count,
+                        (SELECT COALESCE(SUM(price),0) FROM sessions s WHERE s.user_id = u.id AND s.status = 'active') AS total_spent,
+                        (SELECT status FROM sessions s WHERE s.user_id = u.id AND s.status = 'active' AND s.expires_at > ? ORDER BY s.expires_at DESC LIMIT 1) AS access_status
+                 FROM users u
+                 ${search ? 'WHERE u.email LIKE ?' : ''}
+                 ORDER BY u.created_at DESC LIMIT 300`;
+    const args = [Date.now()];
+    if (search) args.push(`%${search}%`);
+    const r = await db.execute({ sql, args });
+    res.json({ clients: r.rows });
+  } catch (e) {
+    console.error('[dashboard clients]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard/api/products', limitAdmin, adminAuth, async (_req, res) => {
+  try {
+    const plans = await getEffectivePlans();
+    res.json({ products: Object.values(plans) });
+  } catch (e) {
+    console.error('[dashboard products]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.post('/dashboard/api/products', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    if (!PLANS[key]) return res.status(400).json({ error: 'Produit inconnu.' });
+    const label = cleanLine(req.body?.label, 80) || PLANS[key].label;
+    const price = Number(req.body?.price);
+    if (!(price > 0)) return res.status(400).json({ error: 'Prix invalide.' });
+    const settings = await saveSettings({ produits: { [key]: { label, price } } });
+    res.json({ ok: true, product: settings.produits[key] });
+  } catch (e) {
+    console.error('[dashboard products save]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard/api/settings', limitAdmin, adminAuth, async (_req, res) => {
+  try { res.json({ settings: await getSettings() }); }
+  catch (e) { console.error('[dashboard settings get]', e); res.status(500).json({ error: 'Erreur serveur.' }); }
+});
+
+app.post('/dashboard/api/settings', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const patch = req.body && typeof req.body === 'object' ? req.body : {};
+    const settings = await saveSettings(patch);
+    res.json({ ok: true, settings });
+  } catch (e) {
+    console.error('[dashboard settings save]', e);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+app.get('/dashboard', limitAdmin, adminAuth, (_req, res) => {
+  const nonce = crypto.randomBytes(16).toString('base64');
+  res.set({
+    'Content-Security-Policy':
+      `default-src 'none'; style-src 'unsafe-inline' https://cdnjs.cloudflare.com; ` +
+      `script-src 'nonce-${nonce}' https://cdnjs.cloudflare.com; img-src 'self' data:; ` +
+      `font-src https://cdnjs.cloudflare.com; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+    'Cache-Control': 'no-store',
+  });
+  res.type('html').send(DASHBOARD_HTML(nonce));
 });
 
 /* ========================== ERREURS ========================== */

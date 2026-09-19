@@ -24,6 +24,7 @@
   "dependencies": {
     "@tursodatabase/serverless": "^1.4.0",
     "express": "^5.2.1",
-    "nodemailer": "^10.0.9"
+    "nodemailer": "^10.0.9",
+    "stripe": "^17.4.0"
   }
 }

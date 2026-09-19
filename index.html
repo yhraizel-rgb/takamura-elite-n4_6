@@ -342,6 +342,9 @@
       <div class="plans" id="plans"></div>
       <div class="pay-info" id="payInfo"></div>
 
+      <div id="gatewayButtons" style="display:flex;flex-direction:column;gap:8px;margin:6px 0 18px"></div>
+      <div class="sub" id="manualPayLabel">Ou déclarez un paiement manuel (Orange Money / MTN MoMo) ci-dessous :</div>
+
       <label for="pName">Votre nom</label>
       <input id="pName" type="text" placeholder="Nom / pseudo" autocomplete="off">
 
@@ -702,6 +705,39 @@ function renderPayInfo() {
   );
 }
 
+const GATEWAY_LABEL = {
+  stripe: '💳 Payer par carte bancaire',
+  mtn_momo: '📱 Payer avec MTN MoMo',
+  orange_money: '🟠 Payer avec Orange Money',
+  wave: '🔵 Payer avec Wave',
+};
+
+function renderGatewayButtons() {
+  const box = $('gatewayButtons');
+  const gateways = state.config.gateways || [];
+  box.replaceChildren();
+  const manualLabel = $('manualPayLabel');
+  if (!gateways.length) { manualLabel.textContent = 'Déclarez votre paiement Mobile Money ci-dessous :'; return; }
+  manualLabel.textContent = 'Ou déclarez un paiement manuel ci-dessous :';
+  for (const g of gateways) {
+    const btn = el('button', { class: 'btn btn-gold btn-block', type: 'button', text: GATEWAY_LABEL[g] || g });
+    btn.style.marginBottom = '2px';
+    btn.addEventListener('click', () => withBusy(btn, async () => {
+      setMsg($('payErr'), '', 'err');
+      try {
+        const route = g === 'stripe' ? '/api/checkout' : '/api/cinetpay';
+        const body = g === 'stripe' ? { plan: state.plan } : { plan: state.plan, channel: g === 'mtn_momo' ? 'MTN' : g === 'orange_money' ? 'ORANGE_MONEY' : 'WAVE' };
+        const data = await api(route, { method: 'POST', body });
+        if (data.url) window.location.href = data.url;
+      } catch (e) {
+        if (e.status === 401) { forgetToken(); return show('auth'); }
+        setMsg($('payErr'), e.message, 'err');
+      }
+    }));
+    box.appendChild(btn);
+  }
+}
+
 function setPending(pending) {
   const btn = $('payBtn');
   if (pending) {
@@ -732,6 +768,7 @@ async function enterPaywall(me) {
   if (!state.config.plans.some((p) => p.key === state.plan)) state.plan = state.config.plans[0].key;
   renderPlans();
   renderPayInfo();
+  renderGatewayButtons();
   setMsg($('payErr'), '', 'err');
   setPending(!!me.pending);
   show('paywall');
