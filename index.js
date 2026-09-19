@@ -123,8 +123,38 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     email_status TEXT
   )`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, status)`);
-  await db.execute(`CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at)`);
+  // Compat : si ces tables existaient déjà (anciennes versions) sans certaines
+  // colonnes, on les ajoute AVANT de créer les index (sinon « no such column »).
+  await ensureColumn('auth_tokens', 'user_id', 'INTEGER');
+  await ensureColumn('auth_tokens', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
+
+  await ensureColumn('sessions', 'user_id', 'INTEGER');
+  await ensureColumn('sessions', 'plan', 'TEXT');
+  await ensureColumn('sessions', 'price', 'INTEGER');
+  await ensureColumn('sessions', 'payer_name', 'TEXT');
+  await ensureColumn('sessions', 'payer_phone', 'TEXT');
+  await ensureColumn('sessions', 'transaction_ref', 'TEXT');
+  await ensureColumn('sessions', 'status', "TEXT NOT NULL DEFAULT 'active'");
+  await ensureColumn('sessions', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn('sessions', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
+
+  await ensureColumn('reports', 'user_id', 'INTEGER');
+  await ensureColumn('reports', 'case_id', 'TEXT');
+  await ensureColumn('reports', 'category', 'TEXT');
+  await ensureColumn('reports', 'severity', 'TEXT');
+  await ensureColumn('reports', 'wa_number', 'TEXT');
+  await ensureColumn('reports', 'message', 'TEXT');
+  await ensureColumn('reports', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn('reports', 'email_status', 'TEXT');
+
+  // Les index sont un bonus de performance : un échec ne doit jamais empêcher le démarrage.
+  for (const sql of [
+    `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at)`,
+  ]) {
+    try { await db.execute(sql); }
+    catch (e) { console.warn('[DB] Index ignoré :', e.message); }
+  }
 
   // Ménage : tokens de connexion expirés
   await db.execute({ sql: `DELETE FROM auth_tokens WHERE created_at < ?`, args: [Date.now() - TOKEN_TTL_MS] });
