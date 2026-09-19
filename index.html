@@ -203,16 +203,12 @@
         <div class="sub">Créez un compte. Un code à 6 chiffres vous sera envoyé par email pour vérifier votre adresse.</div>
         <label for="regEmail">Email</label>
         <input id="regEmail" type="email" placeholder="vous@exemple.com" autocomplete="email">
-        <label for="regPassword">Mot de passe (6 caractères min.)</label>
+        <label for="regPassword">Mot de passe (8 caractères min.)</label>
         <input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password">
         <label for="regPassword2">Confirmer le mot de passe</label>
         <input id="regPassword2" type="password" placeholder="••••••••" autocomplete="new-password">
         <button class="btn btn-gold btn-block" id="registerBtn" style="margin-top:18px;">Créer mon compte</button>
         <div class="err" id="registerErr"></div>
-      </div>
-
-      <div class="hint" style="margin-top:20px">
-        Support : <b>yenohyenoh209@gmail.com</b>
       </div>
     </div>
   </div>
@@ -366,7 +362,7 @@
   </form>
 
   <footer class="foot">
-    Takamura Elite — outil de signalement. Les signalements sont envoyés depuis <b>yenohyenoh209@gmail.com</b> vers les adresses de support WhatsApp.<br>
+    Takamura Elite — outil de signalement. Les signalements sont envoyés vers les adresses de support WhatsApp.<br>
     Pour les faits impliquant des mineurs, signalez aussi aux autorités de votre pays sans attendre.
   </footer>
 </div>
@@ -376,7 +372,430 @@
    ÉTAT
    ========================================================= */
 const TOKEN_KEY = 'takamura_token';
+const RESEND_COOLDOWN_S = 60;
+const POLL_MS = 15000;
+
+const $ = (id) => document.getElementById(id);
+
+const store = {
+  get()  { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } },
+  set(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch { /* stockage indisponible */ } },
+  clear(){ try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } },
+};
+
 const state = {
   config: null,
   plan: 'day',
-  token: localStorage.getItem(TOKEN_KEY) 
+  token: store.get(),
+  verifyEmail: '',
+  caseId: '',
+  timers: { poll: null, badge: null, resend: null },
+};
+
+const DEST_NOTES = {
+  'support@support.whatsapp.com': 'Support général',
+  'support@whatsapp.com': 'Support',
+  'android@support.whatsapp.com': 'Android',
+  'smb@support.whatsapp.com': 'WhatsApp Business',
+  'accessibility@support.whatsapp.com': 'Accessibilité',
+};
+
+/* =========================================================
+   OUTILS
+   ========================================================= */
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k === 'dataset') Object.assign(n.dataset, v);
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids) n.append(c);
+  return n;
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  if (state.token) headers['X-User-Token'] = state.token;
+  let res;
+  try {
+    res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    const err = new Error('Connexion au serveur impossible.');
+    err.status = 0;
+    throw err;
+  }
+  let data = null;
+  try { data = await res.json(); } catch { /* corps vide */ }
+  if (!res.ok) {
+    const err = new Error((data && data.error) || 'Erreur serveur.');
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+async function ensureConfig() {
+  if (!state.config) state.config = await api('/api/config');
+  return state.config;
+}
+
+function show(name) {
+  for (const v of ['auth', 'verify', 'paywall', 'site']) $(v).hidden = (v !== name);
+  if (name !== 'paywall') stopPoll();
+  if (name !== 'site') stopBadge();
+  window.scrollTo(0, 0);
+}
+
+function stopPoll()  { clearInterval(state.timers.poll);  state.timers.poll = null; }
+function stopBadge() { clearInterval(state.timers.badge); state.timers.badge = null; }
+
+function forgetToken() { state.token = ''; store.clear(); }
+
+async function withBusy(btn, fn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try { await fn(); } finally { btn.disabled = false; }
+}
+
+function setMsg(node, text, kind) {
+  node.textContent = text || '';
+  if (kind) node.className = kind;
+}
+
+function newCaseId() {
+  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const rnd = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).toUpperCase().padStart(5, '0').slice(0, 5);
+  return `TKM-${ymd}-${rnd}`;
+}
+function refreshCaseId() {
+  state.caseId = newCaseId();
+  $('caseId').textContent = `DOSSIER N° ${state.caseId}`;
+}
+
+/* =========================================================
+   AUTH
+   ========================================================= */
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
+  $('tabLogin').hidden = (tab !== 'login');
+  $('tabRegister').hidden = (tab !== 'register');
+  setMsg($('loginErr'), ''); setMsg($('registerErr'), '');
+}
+document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+function openVerify(email) {
+  state.verifyEmail = email;
+  $('verifyEmail').textContent = email;
+  $('verifyTtl').textContent = (state.config && state.config.codeTtlMinutes) || 15;
+  $('verifyCode').value = '';
+  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
+  show('verify');
+  startResendCooldown();
+  $('verifyCode').focus();
+}
+
+function startResendCooldown() {
+  clearInterval(state.timers.resend);
+  const btn = $('resendBtn');
+  let left = RESEND_COOLDOWN_S;
+  btn.disabled = true;
+  btn.textContent = `Renvoyer (${left}s)`;
+  state.timers.resend = setInterval(() => {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(state.timers.resend);
+      btn.disabled = false;
+      btn.textContent = 'Renvoyer le code';
+    } else {
+      btn.textContent = `Renvoyer (${left}s)`;
+    }
+  }, 1000);
+}
+
+$('loginBtn').addEventListener('click', () => withBusy($('loginBtn'), async () => {
+  setMsg($('loginErr'), '');
+  const email = $('loginEmail').value.trim();
+  const password = $('loginPassword').value;
+  if (!email || !password) return setMsg($('loginErr'), 'Email et mot de passe requis.');
+  try {
+    await ensureConfig();
+    const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
+    state.token = data.token; store.set(data.token);
+    $('loginPassword').value = '';
+    await route();
+  } catch (e) {
+    if (e.status === 403 && e.data && e.data.needsVerification) return openVerify(e.data.email || email);
+    setMsg($('loginErr'), e.message);
+  }
+}));
+
+$('registerBtn').addEventListener('click', () => withBusy($('registerBtn'), async () => {
+  setMsg($('registerErr'), '');
+  const email = $('regEmail').value.trim();
+  const p1 = $('regPassword').value;
+  const p2 = $('regPassword2').value;
+  if (!email || !p1) return setMsg($('registerErr'), 'Email et mot de passe requis.');
+  if (p1.length < 8) return setMsg($('registerErr'), 'Mot de passe trop court (8 caractères min).');
+  if (p1 !== p2) return setMsg($('registerErr'), 'Les mots de passe ne correspondent pas.');
+  try {
+    await ensureConfig();
+    const data = await api('/api/auth/register', { method: 'POST', body: { email, password: p1 } });
+    $('regPassword').value = ''; $('regPassword2').value = '';
+    if (data.needsVerification) openVerify(data.email || email);
+  } catch (e) {
+    setMsg($('registerErr'), e.message);
+  }
+}));
+
+$('verifyCode').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+});
+
+$('verifyBtn').addEventListener('click', () => withBusy($('verifyBtn'), async () => {
+  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
+  const code = $('verifyCode').value.trim();
+  if (code.length !== 6) return setMsg($('verifyErr'), 'Entrez le code à 6 chiffres.');
+  try {
+    const data = await api('/api/auth/verify', { method: 'POST', body: { email: state.verifyEmail, code } });
+    state.token = data.token; store.set(data.token);
+    await route();
+  } catch (e) {
+    setMsg($('verifyErr'), e.message);
+  }
+}));
+
+$('resendBtn').addEventListener('click', async () => {
+  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
+  try {
+    await api('/api/auth/resend', { method: 'POST', body: { email: state.verifyEmail } });
+    setMsg($('verifyOk'), 'Si le compte existe, un nouveau code vient d\'être envoyé.');
+    startResendCooldown();
+  } catch (e) {
+    setMsg($('verifyErr'), e.message);
+  }
+});
+
+$('backAuthBtn').addEventListener('click', () => { clearInterval(state.timers.resend); show('auth'); });
+
+async function logout() {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* on déconnecte quand même */ }
+  forgetToken();
+  state.me = null;
+  show('auth');
+  switchTab('login');
+}
+$('payLogoutBtn').addEventListener('click', logout);
+$('siteLogoutBtn').addEventListener('click', logout);
+
+// Entrée = valider
+[['loginEmail', 'loginBtn'], ['loginPassword', 'loginBtn'],
+ ['regEmail', 'registerBtn'], ['regPassword', 'registerBtn'], ['regPassword2', 'registerBtn'],
+ ['verifyCode', 'verifyBtn']].forEach(([input, btn]) => {
+  $(input).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $(btn).click(); } });
+});
+
+/* =========================================================
+   PAYWALL
+   ========================================================= */
+function renderPlans() {
+  const box = $('plans');
+  box.replaceChildren();
+  for (const p of state.config.plans) {
+    const card = el('div',
+      { class: 'plan' + (p.key === state.plan ? ' sel' : ''), role: 'button', tabindex: '0' },
+      el('div', { class: 'p-name', text: p.label }),
+      el('div', { class: 'p-price' }, Number(p.price).toLocaleString('fr-FR'), el('small', { text: p.currency })));
+    card.addEventListener('click', () => { state.plan = p.key; renderPlans(); renderPayInfo(); });
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); } });
+    box.append(card);
+  }
+}
+
+function renderPayInfo() {
+  const p = state.config.plans.find((x) => x.key === state.plan) || state.config.plans[0];
+  const pay = state.config.payment || {};
+  const row = (k, v) => el('div', { class: 'row' }, el('span', { text: k }), el('b', { text: v }));
+  const box = $('payInfo');
+  box.replaceChildren(
+    row('Montant à payer', `${Number(p.price).toLocaleString('fr-FR')} ${p.currency}`),
+    row('Orange Money', pay.orange_money || '—'),
+    row('MTN MoMo', pay.mtn_momo || '—'),
+    row('Bénéficiaire', pay.beneficiary || '—'),
+  );
+}
+
+function setPending(pending) {
+  const btn = $('payBtn');
+  if (pending) {
+    btn.disabled = true;
+    btn.textContent = 'Paiement en attente de validation…';
+    setMsg($('payErr'), 'Votre paiement a été enregistré. Votre accès sera activé dès sa validation — cette page se met à jour automatiquement.', 'ok');
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'J\'ai payé — Activer mon accès';
+  }
+}
+
+function startPoll() {
+  stopPoll();
+  state.timers.poll = setInterval(async () => {
+    try {
+      const me = await api('/api/me');
+      if (me.hasAccess || !me.pending) await route();
+    } catch (e) {
+      if (e.status === 401) { forgetToken(); show('auth'); }
+    }
+  }, POLL_MS);
+}
+
+async function enterPaywall(me) {
+  await ensureConfig();
+  $('payUserEmail').textContent = me.user.email;
+  if (!state.config.plans.some((p) => p.key === state.plan)) state.plan = state.config.plans[0].key;
+  renderPlans();
+  renderPayInfo();
+  setMsg($('payErr'), '', 'err');
+  setPending(!!me.pending);
+  show('paywall');
+  if (me.pending) startPoll();
+}
+
+$('payBtn').addEventListener('click', () => withBusy($('payBtn'), async () => {
+  setMsg($('payErr'), '', 'err');
+  const name = $('pName').value.trim();
+  const phone = $('pPhone').value.trim();
+  const transactionRef = $('pRef').value.trim();
+  if (!name || !phone) return setMsg($('payErr'), 'Nom et téléphone requis.', 'err');
+  try {
+    await api('/api/payment/start', { method: 'POST', body: { plan: state.plan, name, phone, transactionRef } });
+    setPending(true);
+    startPoll();
+    return; // le bouton reste désactivé pendant l'attente
+  } catch (e) {
+    if (e.status === 401) { forgetToken(); return show('auth'); }
+    setMsg($('payErr'), e.message, 'err');
+  }
+}));
+
+/* =========================================================
+   SITE (formulaire de signalement)
+   ========================================================= */
+function renderDest() {
+  const box = $('destList');
+  box.replaceChildren();
+  for (const addr of (state.config.whatsappEmails || [])) {
+    const cb = el('input', { type: 'checkbox', value: addr, checked: 'checked' });
+    box.append(el('label', { class: 'dest-item', style: 'margin:0;text-transform:none;letter-spacing:0;color:inherit;font-weight:400' },
+      cb,
+      el('span', { class: 'addr', text: addr }),
+      el('span', { class: 'note', text: DEST_NOTES[addr] || '' })));
+  }
+}
+
+function fmtRemaining(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}j ${h}h` : (h > 0 ? `${h}h ${String(m).padStart(2, '0')}min` : `${m}min`);
+}
+
+function startBadge(access) {
+  stopBadge();
+  const label = (state.config.plans.find((p) => p.key === access.plan) || {}).label || 'Accès';
+  const tick = () => {
+    const left = access.expiresAt - Date.now();
+    if (left <= 0) { stopBadge(); route(); return; }
+    $('sessionBadge').textContent = `${label} · reste ${fmtRemaining(left)}`;
+  };
+  tick();
+  state.timers.badge = setInterval(tick, 30000);
+}
+
+async function enterSite(me) {
+  await ensureConfig();
+  renderDest();
+  refreshCaseId();
+  setStatus('');
+  show('site');
+  startBadge(me.access);
+}
+
+function setStatus(text, isError) {
+  const s = $('statusLine');
+  s.textContent = text || '';
+  s.style.color = isError ? 'var(--blood)' : 'var(--gold-2)';
+}
+
+$('reportForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('submitBtn');
+  if (btn.disabled) return;
+
+  const destinations = [...document.querySelectorAll('#destList input:checked')].map((i) => i.value);
+  if (!destinations.length) return setStatus('Choisissez au moins une adresse de destination.', true);
+  const sev = document.querySelector('input[name="sev"]:checked');
+
+  btn.disabled = true;
+  setStatus('Envoi en cours…');
+  try {
+    const data = await api('/api/report', {
+      method: 'POST',
+      body: {
+        caseId: state.caseId,
+        category: $('category').value,
+        severity: sev ? sev.value : 'Modérée',
+        waNumber: $('waNumber').value.trim(),
+        message: $('msgContent').value,
+        destinations,
+      },
+    });
+    setStatus(`Signalement envoyé : ${data.sent}/${data.total} adresse(s).`, data.sent === 0);
+    if (data.sent > 0) {
+      $('waNumber').value = '';
+      $('msgContent').value = '';
+      $('category').value = '';
+      refreshCaseId();
+    }
+  } catch (err) {
+    if (err.status === 401) { forgetToken(); return show('auth'); }
+    if (err.status === 403) { setStatus(err.message, true); return route(); }
+    setStatus(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* =========================================================
+   ROUTAGE / DÉMARRAGE
+   ========================================================= */
+async function route() {
+  if (!state.token) return show('auth');
+  try {
+    const me = await api('/api/me');
+    if (me.hasAccess) return await enterSite(me);
+    return await enterPaywall(me);
+  } catch (e) {
+    if (e.status === 401) { forgetToken(); return show('auth'); }
+    show('auth');
+    setMsg($('loginErr'), e.message);
+  }
+}
+
+(function init() {
+  const intro = $('intro');
+  intro.setAttribute('role', 'button');
+  intro.setAttribute('tabindex', '0');
+  let entered = false;
+  const enter = () => { if (entered) return; entered = true; intro.classList.add('hidden'); route(); };
+  intro.addEventListener('click', enter);
+  intro.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') enter(); });
+  ensureConfig().then(() => { $('verifyTtl').textContent = state.config.codeTtlMinutes; }).catch(() => {});
+})();
+</script>
+</body>
+</html>
