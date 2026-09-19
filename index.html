@@ -36,17 +36,15 @@
     animation:blink 1.8s ease-in-out infinite}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
 
-  /* ========== PAYWALL ========== */
-  #paywall{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+  #auth,#verify,#paywall{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
     padding:40px 18px;overflow-y:auto;
     background:linear-gradient(rgba(7,8,10,.55),rgba(7,8,10,.9)),
                url('https://files.catbox.moe/bqgldc.jpg') center/cover no-repeat fixed;
     transition:opacity .6s,visibility .6s}
-  #paywall.hidden{opacity:0;visibility:hidden;pointer-events:none}
+  #auth.hidden,#verify.hidden,#paywall.hidden{opacity:0;visibility:hidden;pointer-events:none}
+  #auth[hidden],#verify[hidden],#paywall[hidden]{display:none}
 
-  .pay-wrap{width:100%;max-width:960px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
-  @media(max-width:840px){.pay-wrap{grid-template-columns:1fr}}
-
+  .pay-wrap{width:100%;max-width:540px;margin:0 auto}
   .panel{background:var(--ink-2);border:1px solid var(--line);padding:26px 24px;clip-path:var(--clip);position:relative}
   .panel::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),transparent 70%)}
 
@@ -58,7 +56,13 @@
   .brand-lg .t em{font-family:'Cinzel',serif;font-style:italic;font-weight:900;color:var(--gold);font-size:14px;letter-spacing:.1em;display:block;margin-top:2px}
 
   .panel h2{font-size:20px;color:var(--paper);margin-bottom:6px}
-  .panel .sub{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:22px}
+  .panel .sub{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:20px}
+
+  .tabs{display:flex;margin-bottom:20px;border-bottom:1px solid var(--line)}
+  .tab{flex:1;text-align:center;padding:12px 8px;cursor:pointer;font-size:12px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--dim);border-bottom:2px solid transparent;transition:.15s;user-select:none}
+  .tab:hover{color:var(--paper)}
+  .tab.active{color:var(--gold);border-bottom-color:var(--gold)}
 
   .plans{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px}
   @media(max-width:520px){.plans{grid-template-columns:1fr}}
@@ -80,16 +84,31 @@
     font-family:'IBM Plex Mono',monospace;font-size:13.5px;padding:12px 13px}
   input:focus,textarea:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px;border-color:var(--gold)}
 
+  #verifyCode{
+    text-align:center;font-size:26px;letter-spacing:.55em;padding:16px 10px;font-weight:700;
+    color:var(--gold-2);
+  }
+
   .btn{border:1px solid var(--gold);background:transparent;color:var(--gold);font-family:'IBM Plex Mono',monospace;
     font-weight:600;font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;padding:14px 18px;cursor:pointer;transition:.15s}
   .btn:hover{background:var(--gold);color:var(--ink)}
+  .btn:disabled{opacity:.55;cursor:not-allowed}
   .btn-gold{background:linear-gradient(180deg,var(--gold-2),var(--gold));color:#0A0B0D;border-color:var(--gold);font-weight:700}
   .btn-gold:hover{filter:brightness(1.12)}
   .btn-block{display:block;width:100%}
+  .btn-ghost{border-color:var(--line);color:var(--dim)}
+  .btn-ghost:hover{background:transparent;color:var(--paper);border-color:var(--gold)}
 
   .hint{font-size:11.5px;color:var(--dim);margin-top:8px;line-height:1.5}
   .err{color:var(--blood);font-size:12px;margin-top:10px;min-height:16px;letter-spacing:.03em}
   .ok{color:var(--gold-2);font-size:12px;margin-top:10px;min-height:16px}
+
+  .user-chip{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    background:var(--ink);border:1px solid var(--line);padding:10px 12px;margin-bottom:18px;font-size:11.5px}
+  .user-chip b{color:var(--gold-2);word-break:break-all}
+  .user-chip button{background:none;border:1px solid var(--line);color:var(--dim);cursor:pointer;
+    font-family:inherit;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:6px 10px}
+  .user-chip button:hover{color:var(--blood);border-color:var(--blood)}
 
   /* ========== SITE ========== */
   #site{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:56px 24px 100px}
@@ -104,6 +123,9 @@
   .case-id{font-size:11px;color:var(--dim);letter-spacing:.14em}
   .session-badge{font-size:10.5px;color:var(--gold);letter-spacing:.16em;text-transform:uppercase;
     border:1px solid var(--line);padding:6px 10px}
+  .logout-btn{background:none;border:1px solid var(--line);color:var(--dim);cursor:pointer;
+    font-family:inherit;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:7px 11px}
+  .logout-btn:hover{color:var(--blood);border-color:var(--blood)}
 
   .lede{margin-bottom:36px}
   .lede h2{font-size:29px;color:var(--paper);line-height:1.2;max-width:640px;margin-bottom:12px}
@@ -149,21 +171,105 @@
 <!-- ============ INTRO ============ -->
 <div id="intro"><div class="tap-hint">Toucher pour entrer</div></div>
 
-<!-- ============ PAYWALL ============ -->
-<div id="paywall" hidden>
+<!-- ============ AUTH ============ -->
+<div id="auth" hidden>
   <div class="pay-wrap">
-
-    <!-- Colonne gauche : plans + paiement -->
     <div class="panel">
       <div class="brand-lg">
         <div class="crest">T</div>
         <div class="t">TAKAMURA<em>ELITE</em></div>
       </div>
-      <h2>Accès au système</h2>
-      <div class="sub">Choisissez une formule. Le paiement se fait par Mobile Money, puis vous entrez votre numéro et la référence. L'accès est activé immédiatement.</div>
+
+      <div class="tabs">
+        <div class="tab active" data-tab="login">Connexion</div>
+        <div class="tab" data-tab="register">Inscription</div>
+      </div>
+
+      <!-- LOGIN -->
+      <div id="tabLogin">
+        <h2>Connexion</h2>
+        <div class="sub">Entrez votre email et mot de passe.</div>
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" placeholder="vous@exemple.com" autocomplete="email">
+        <label for="loginPassword">Mot de passe</label>
+        <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+        <button class="btn btn-gold btn-block" id="loginBtn" style="margin-top:18px;">Se connecter</button>
+        <div class="err" id="loginErr"></div>
+      </div>
+
+      <!-- REGISTER -->
+      <div id="tabRegister" hidden>
+        <h2>Inscription</h2>
+        <div class="sub">Créez un compte. Un code à 6 chiffres vous sera envoyé par email pour vérifier votre adresse.</div>
+        <label for="regEmail">Email</label>
+        <input id="regEmail" type="email" placeholder="vous@exemple.com" autocomplete="email">
+        <label for="regPassword">Mot de passe (6 caractères min.)</label>
+        <input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password">
+        <label for="regPassword2">Confirmer le mot de passe</label>
+        <input id="regPassword2" type="password" placeholder="••••••••" autocomplete="new-password">
+        <button class="btn btn-gold btn-block" id="registerBtn" style="margin-top:18px;">Créer mon compte</button>
+        <div class="err" id="registerErr"></div>
+      </div>
+
+      <div class="hint" style="margin-top:20px">
+        Support : <b>yenohyenoh209@gmail.com</b>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ VERIFY (saisie du code) ============ -->
+<div id="verify" hidden>
+  <div class="pay-wrap">
+    <div class="panel">
+      <div class="brand-lg">
+        <div class="crest">T</div>
+        <div class="t">TAKAMURA<em>ELITE</em></div>
+      </div>
+
+      <h2>Vérification de l'email</h2>
+      <div class="sub">
+        Un code à 6 chiffres a été envoyé à <b id="verifyEmail" style="color:var(--gold-2)">—</b>.
+        Il est valable <b id="verifyTtl">15</b> minutes.
+      </div>
+
+      <label for="verifyCode">Code de vérification</label>
+      <input id="verifyCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+
+      <button class="btn btn-gold btn-block" id="verifyBtn" style="margin-top:18px;">Vérifier</button>
+      <div class="err" id="verifyErr"></div>
+      <div class="ok" id="verifyOk"></div>
+
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <button class="btn btn-ghost" id="resendBtn" style="flex:1">Renvoyer le code</button>
+        <button class="btn btn-ghost" id="backAuthBtn" style="flex:1">Retour</button>
+      </div>
+
+      <div class="hint" style="margin-top:16px">
+        Pas reçu ? Vérifiez le dossier spam ou attendez quelques instants avant de demander un renvoi.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAYWALL ============ -->
+<div id="paywall" hidden>
+  <div class="pay-wrap">
+    <div class="panel">
+      <div class="brand-lg">
+        <div class="crest">T</div>
+        <div class="t">TAKAMURA<em>ELITE</em></div>
+      </div>
+
+      <div class="user-chip">
+        <span>Connecté : <b id="payUserEmail">—</b></span>
+        <button id="payLogoutBtn" type="button">Déconnexion</button>
+      </div>
+
+      <h2>Choisissez votre accès</h2>
+      <div class="sub">Le paiement se fait par Mobile Money. L'accès est activé immédiatement après validation.</div>
 
       <div class="plans" id="plans"></div>
-
       <div class="pay-info" id="payInfo"></div>
 
       <label for="pName">Votre nom</label>
@@ -177,27 +283,7 @@
 
       <button class="btn btn-gold btn-block" id="payBtn" style="margin-top:18px;">J'ai payé — Activer mon accès</button>
       <div class="err" id="payErr"></div>
-      <div class="hint">Le paiement est vérifié manuellement. Vous pouvez aussi contacter le support à <b>yenohyenoh209@gmail.com</b>.</div>
     </div>
-
-    <!-- Colonne droite : code d'accès alternatif -->
-    <div class="panel">
-      <h2>Déjà un code ?</h2>
-      <div class="sub">Entrez votre code d'accès pour déverrouiller le registre de signalement (24 heures).</div>
-
-      <label for="codeInput">Code d'accès</label>
-      <input id="codeInput" type="text" maxlength="24" placeholder="CODE" autocomplete="off"
-             style="text-align:center;letter-spacing:.28em;text-transform:uppercase">
-
-      <button class="btn btn-block" id="codeBtn" style="margin-top:14px;">Déverrouiller</button>
-      <div class="err" id="codeErr"></div>
-
-      <div class="hint" style="margin-top:20px">
-        Pas encore de code ? Choisissez une formule à gauche.<br><br>
-        <b>Nous frappons dans le silence.</b>
-      </div>
-    </div>
-
   </div>
 </div>
 
@@ -208,9 +294,10 @@
       <div class="crest">T</div>
       <h1>TAKAMURA <em>ELITE</em></h1>
     </div>
-    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div class="session-badge" id="sessionBadge">Session —</div>
       <div class="case-id" id="caseId">DOSSIER N° —</div>
+      <button class="logout-btn" id="siteLogoutBtn" type="button">Déconnexion</button>
     </div>
   </header>
 
@@ -286,136 +373,10 @@
 
 <script>
 /* =========================================================
-   ÉTAT GLOBAL
+   ÉTAT
    ========================================================= */
 const TOKEN_KEY = 'takamura_token';
 const state = {
   config: null,
   plan: 'day',
-  token: localStorage.getItem(TOKEN_KEY) || '',
-  session: null,
-};
-
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-
-/* =========================================================
-   INTRO
-   ========================================================= */
-$('#intro').addEventListener('click', () => {
-  $('#intro').classList.add('hidden');
-  boot();
-});
-
-/* =========================================================
-   BOOT
-   ========================================================= */
-async function boot() {
-  await loadConfig();
-  renderPlans();
-  renderDestList();
-
-  // Une session existe déjà ?
-  if (state.token) {
-    const ok = await checkSession(state.token);
-    if (ok) return enterSite();
-  }
-  showPaywall();
-}
-
-async function loadConfig() {
-  try {
-    const r = await fetch('/api/config');
-    state.config = await r.json();
-  } catch (e) {
-    state.config = { plans: [], payment: {}, whatsappEmails: [] };
-  }
-}
-
-/* =========================================================
-   PAYWALL
-   ========================================================= */
-function showPaywall() {
-  $('#paywall').hidden = false;
-  $('#paywall').classList.remove('hidden');
-  $('#site').hidden = true;
-}
-function hidePaywall() {
-  $('#paywall').classList.add('hidden');
-}
-
-function renderPlans() {
-  const wrap = $('#plans');
-  wrap.innerHTML = '';
-  const plans = (state.config && state.config.plans) || [];
-  plans.forEach(p => {
-    const el = document.createElement('div');
-    el.className = 'plan' + (p.key === state.plan ? ' sel' : '');
-    el.dataset.key = p.key;
-    el.innerHTML = `<div class="p-name">${p.label}</div>
-                    <div class="p-price">${p.price}<small>${p.currency}</small></div>`;
-    el.addEventListener('click', () => {
-      state.plan = p.key;
-      renderPlans();
-      renderPayInfo();
-    });
-    wrap.appendChild(el);
-  });
-  renderPayInfo();
-}
-
-function renderPayInfo() {
-  const p = (state.config?.payment) || {};
-  const plan = (state.config?.plans || []).find(x => x.key === state.plan);
-  $('#payInfo').innerHTML = `
-    <div class="row"><span>Formule</span><b>${plan ? plan.label : '—'}</b></div>
-    <div class="row"><span>Montant</span><b>${plan ? plan.price + ' ' + plan.currency : '—'}</b></div>
-    <div class="row"><span>Orange Money</span><b>${p.orange_money || '—'}</b></div>
-    <div class="row"><span>MTN MoMo</span><b>${p.mtn_momo || '—'}</b></div>
-    <div class="row"><span>Bénéficiaire</span><b>${p.beneficiary || '—'}</b></div>
-  `;
-}
-
-/* ---------- Paiement → session ---------- */
-$('#payBtn').addEventListener('click', async () => {
-  const err = $('#payErr'); err.textContent = '';
-  const name = $('#pName').value.trim();
-  const phone = $('#pPhone').value.trim();
-  const ref = $('#pRef').value.trim();
-
-  if (!name || !phone) { err.textContent = 'Nom et téléphone requis.'; return; }
-
-  const btn = $('#payBtn');
-  btn.disabled = true; btn.textContent = 'Activation…';
-
-  try {
-    const r = await fetch('/api/payment/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: state.plan, name, phone, transactionRef: ref }),
-    });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Erreur.');
-    state.token = data.token;
-    localStorage.setItem(TOKEN_KEY, data.token);
-    await checkSession(data.token);
-    enterSite();
-  } catch (e) {
-    err.textContent = e.message;
-  } finally {
-    btn.disabled = false; btn.textContent = "J'ai payé — Activer mon accès";
-  }
-});
-
-/* ---------- Code d'accès ---------- */
-$('#codeBtn').addEventListener('click', async () => {
-  const err = $('#codeErr'); err.textContent = '';
-  const code = $('#codeInput').value.trim().toUpperCase();
-  if (!code) { err.textContent = 'Entrez un code.'; return; }
-
-  const btn = $('#codeBtn');
-  btn.disabled = true; btn.textContent = 'Vérification…';
-  try {
-    const r = await fetch('/api/payment/code', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json'
+  token: localStorage.getItem(TOKEN_KEY) 
