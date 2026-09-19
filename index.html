@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAKAMURA ELITE — Signalement</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Cinzel:ital,wght@0,400;0,700;0,900;1,700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#07080A; --ink-2:#0E1014; --ink-3:#15181E;
+    --paper:#EDE8DC; --dim:#8B8478;
+    --gold:#C8A54B; --gold-2:#F1D98F; --gold-dark:#7E6420;
+    --blood:#B3121B;
+    --line:rgba(200,165,75,0.20);
+    --clip:polygon(0 16px,16px 0,100% 0,100% calc(100% - 16px),calc(100% - 16px) 100%,0 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;min-height:100vh;overflow-x:hidden;position:relative}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background-image:repeating-linear-gradient(135deg,rgba(200,165,75,0.035) 0 1px,transparent 1px 16px),
+                     radial-gradient(circle at 50% -10%,rgba(200,165,75,0.10),transparent 62%)}
+  h1,h2,h3{font-family:'Cinzel',serif;font-weight:900;margin:0}
+  a{color:var(--gold)}
+
+  #intro{position:fixed;inset:0;z-index:60;cursor:pointer;display:flex;align-items:flex-end;justify-content:center;
+    background:linear-gradient(rgba(7,8,10,.35),rgba(7,8,10,.85)) center/cover,
+               url('https://files.catbox.moe/bqgldc.jpg') center/cover no-repeat;
+    transition:opacity .5s,visibility .5s}
+  #intro.hidden{opacity:0;visibility:hidden;pointer-events:none}
+  #intro .tap-hint{margin-bottom:44px;padding:13px 30px;border:1px solid var(--gold);background:rgba(7,8,10,.62);
+    color:var(--gold-2);font-size:12px;letter-spacing:.24em;text-transform:uppercase;
+    clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+    animation:blink 1.8s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ========== PAYWALL ========== */
+  #paywall{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+    padding:40px 18px;overflow-y:auto;
+    background:linear-gradient(rgba(7,8,10,.55),rgba(7,8,10,.9)),
+               url('https://files.catbox.moe/bqgldc.jpg') center/cover no-repeat fixed;
+    transition:opacity .6s,visibility .6s}
+  #paywall.hidden{opacity:0;visibility:hidden;pointer-events:none}
+
+  .pay-wrap{width:100%;max-width:960px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+  @media(max-width:840px){.pay-wrap{grid-template-columns:1fr}}
+
+  .panel{background:var(--ink-2);border:1px solid var(--line);padding:26px 24px;clip-path:var(--clip);position:relative}
+  .panel::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),transparent 70%)}
+
+  .brand-lg{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+  .brand-lg .crest{width:48px;height:48px;background:linear-gradient(160deg,var(--gold-2),var(--gold) 52%,var(--gold-dark));
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);display:flex;align-items:center;justify-content:center;
+    font-family:'Cinzel',serif;font-weight:900;font-size:20px;color:#07080A}
+  .brand-lg .t{font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:.12em;line-height:1}
+  .brand-lg .t em{font-family:'Cinzel',serif;font-style:italic;font-weight:900;color:var(--gold);font-size:14px;letter-spacing:.1em;display:block;margin-top:2px}
+
+  .panel h2{font-size:20px;color:var(--paper);margin-bottom:6px}
+  .panel .sub{font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:22px}
+
+  .plans{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px}
+  @media(max-width:520px){.plans{grid-template-columns:1fr}}
+  .plan{border:1px solid var(--line);padding:16px 14px;cursor:pointer;background:var(--ink);transition:.15s;
+    clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+  .plan:hover{border-color:rgba(200,165,75,.5)}
+  .plan.sel{border-color:var(--gold);background:linear-gradient(180deg,rgba(200,165,75,.13),rgba(200,165,75,.03))}
+  .plan .p-name{font-family:'Cinzel',serif;font-weight:700;font-size:15px;color:var(--paper);margin-bottom:4px}
+  .plan .p-price{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--gold-2);letter-spacing:.04em;line-height:1}
+  .plan .p-price small{font-size:12px;color:var(--dim);letter-spacing:.1em;margin-left:4px;font-family:'IBM Plex Mono',monospace}
+
+  .pay-info{background:var(--ink);border:1px dashed var(--line);padding:14px;margin-bottom:16px;font-size:12.5px;line-height:1.7}
+  .pay-info b{color:var(--gold-2)}
+  .pay-info .row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dotted rgba(200,165,75,.15);padding:4px 0}
+  .pay-info .row:last-child{border-bottom:none}
+
+  label{display:block;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:14px 0 6px;font-weight:600}
+  input,textarea,select{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--paper);
+    font-family:'IBM Plex Mono',monospace;font-size:13.5px;padding:12px 13px}
+  input:focus,textarea:focus,select:focus{outline:2px solid var(--gold);outline-offset:1px;border-color:var(--gold)}
+
+  .btn{border:1px solid var(--gold);background:transparent;color:var(--gold);font-family:'IBM Plex Mono',monospace;
+    font-weight:600;font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;padding:14px 18px;cursor:pointer;transition:.15s}
+  .btn:hover{background:var(--gold);color:var(--ink)}
+  .btn-gold{background:linear-gradient(180deg,var(--gold-2),var(--gold));color:#0A0B0D;border-color:var(--gold);font-weight:700}
+  .btn-gold:hover{filter:brightness(1.12)}
+  .btn-block{display:block;width:100%}
+
+  .hint{font-size:11.5px;color:var(--dim);margin-top:8px;line-height:1.5}
+  .err{color:var(--blood);font-size:12px;margin-top:10px;min-height:16px;letter-spacing:.03em}
+  .ok{color:var(--gold-2);font-size:12px;margin-top:10px;min-height:16px}
+
+  /* ========== SITE ========== */
+  #site{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:56px 24px 100px}
+  header.top{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);
+    padding-bottom:20px;margin-bottom:40px;flex-wrap:wrap;gap:12px}
+  .brand{display:flex;align-items:center;gap:14px}
+  .brand .crest{width:36px;height:36px;background:linear-gradient(160deg,var(--gold-2),var(--gold) 52%,var(--gold-dark));
+    clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);display:flex;align-items:center;justify-content:center;
+    font-family:'Cinzel',serif;font-weight:900;font-size:15px;color:#07080A}
+  .brand h1{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:.14em;color:var(--paper)}
+  .brand h1 em{font-family:'Cinzel',serif;font-style:italic;font-weight:900;color:var(--gold);font-size:14px;letter-spacing:.1em}
+  .case-id{font-size:11px;color:var(--dim);letter-spacing:.14em}
+  .session-badge{font-size:10.5px;color:var(--gold);letter-spacing:.16em;text-transform:uppercase;
+    border:1px solid var(--line);padding:6px 10px}
+
+  .lede{margin-bottom:36px}
+  .lede h2{font-size:29px;color:var(--paper);line-height:1.2;max-width:640px;margin-bottom:12px}
+  .lede h2 span{color:var(--gold)}
+  .lede p{color:var(--dim);font-size:13.5px;line-height:1.7;max-width:580px}
+
+  .notice{border-left:3px solid var(--gold);background:rgba(200,165,75,.06);padding:14px 16px;font-size:12.5px;
+    color:var(--dim);line-height:1.65;margin-bottom:20px}
+  .notice strong{color:var(--gold-2)}
+  .notice.warn{border-left-color:var(--blood);background:rgba(179,18,27,.08)}
+  .notice.warn strong{color:#E86A70}
+
+  fieldset{border:none;padding:0;margin:0 0 34px}
+  .field-block{margin-bottom:22px}
+  .required::after{content:" *";color:var(--blood)}
+
+  .severity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .sev-opt{position:relative}
+  .sev-opt input{position:absolute;opacity:0}
+  .sev-opt label{display:block;margin:0;padding:13px 12px;border:1px solid var(--line);cursor:pointer;
+    font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);text-align:center;transition:.15s;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+  .sev-opt input:checked+label{border-color:var(--gold);color:var(--ink);
+    background:linear-gradient(180deg,var(--gold-2),var(--gold));font-weight:700}
+
+  .dest-list{display:flex;flex-direction:column;gap:8px}
+  .dest-item{display:flex;align-items:center;gap:12px;border:1px solid var(--line);padding:12px 14px;font-size:12.5px;
+    background:var(--ink-2);transition:.15s}
+  .dest-item:hover{border-color:rgba(200,165,75,.5);background:var(--ink-3)}
+  .dest-item input{width:15px;height:15px;accent-color:var(--gold)}
+  .dest-item .addr{color:var(--paper)}
+  .dest-item .note{color:var(--dim);margin-left:auto;font-size:11px;text-align:right}
+
+  .actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px}
+  .status-line{font-size:11.5px;color:var(--dim)}
+
+  footer.foot{margin-top:60px;border-top:1px solid var(--line);padding-top:22px;font-size:11px;
+    color:var(--dim);line-height:1.8}
+</style>
+</head>
+<body>
+
+<!-- ============ INTRO ============ -->
+<div id="intro"><div class="tap-hint">Toucher pour entrer</div></div>
+
+<!-- ============ PAYWALL ============ -->
+<div id="paywall" hidden>
+  <div class="pay-wrap">
+
+    <!-- Colonne gauche : plans + paiement -->
+    <div class="panel">
+      <div class="brand-lg">
+        <div class="crest">T</div>
+        <div class="t">TAKAMURA<em>ELITE</em></div>
+      </div>
+      <h2>Accès au système</h2>
+      <div class="sub">Choisissez une formule. Le paiement se fait par Mobile Money, puis vous entrez votre numéro et la référence. L'accès est activé immédiatement.</div>
+
+      <div class="plans" id="plans"></div>
+
+      <div class="pay-info" id="payInfo"></div>
+
+      <label for="pName">Votre nom</label>
+      <input id="pName" type="text" placeholder="Nom / pseudo" autocomplete="off">
+
+      <label for="pPhone">Votre numéro (celui qui a payé)</label>
+      <input id="pPhone" type="text" placeholder="+237..." autocomplete="off">
+
+      <label for="pRef">Référence de transaction (optionnel)</label>
+      <input id="pRef" type="text" placeholder="ex: MP2409.1234.A56789" autocomplete="off">
+
+      <button class="btn btn-gold btn-block" id="payBtn" style="margin-top:18px;">J'ai payé — Activer mon accès</button>
+      <div class="err" id="payErr"></div>
+      <div class="hint">Le paiement est vérifié manuellement. Vous pouvez aussi contacter le support à <b>yenohyenoh209@gmail.com</b>.</div>
+    </div>
+
+    <!-- Colonne droite : code d'accès alternatif -->
+    <div class="panel">
+      <h2>Déjà un code ?</h2>
+      <div class="sub">Entrez votre code d'accès pour déverrouiller le registre de signalement (24 heures).</div>
+
+      <label for="codeInput">Code d'accès</label>
+      <input id="codeInput" type="text" maxlength="24" placeholder="CODE" autocomplete="off"
+             style="text-align:center;letter-spacing:.28em;text-transform:uppercase">
+
+      <button class="btn btn-block" id="codeBtn" style="margin-top:14px;">Déverrouiller</button>
+      <div class="err" id="codeErr"></div>
+
+      <div class="hint" style="margin-top:20px">
+        Pas encore de code ? Choisissez une formule à gauche.<br><br>
+        <b>Nous frappons dans le silence.</b>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ SITE ============ -->
+<div id="site" hidden>
+  <header class="top">
+    <div class="brand">
+      <div class="crest">T</div>
+      <h1>TAKAMURA <em>ELITE</em></h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div class="session-badge" id="sessionBadge">Session —</div>
+      <div class="case-id" id="caseId">DOSSIER N° —</div>
+    </div>
+  </header>
+
+  <div class="lede">
+    <h2>Signaler un <span>compte WhatsApp</span></h2>
+    <p>Le formulaire prépare et envoie un e-mail complet aux adresses de support WhatsApp ci-dessous.</p>
+  </div>
+
+  <div class="notice warn">
+    <strong>Cas de pédocriminalité :</strong> en plus du signalement à WhatsApp, contactez immédiatement les autorités compétentes de votre pays (police, gendarmerie, NCMEC CyberTipline / INHOPE). Le support WhatsApp peut mettre du temps à traiter les e-mails ; les autorités doivent être alertées sans délai.
+  </div>
+
+  <div class="notice">
+    <strong>Conseil :</strong> en complément de cet e-mail, signalez aussi le compte directement depuis l'application WhatsApp (ouvrir la conversation → nom du contact → Signaler). C'est le canal que WhatsApp traite le plus rapidement en interne.
+  </div>
+
+  <form id="reportForm">
+    <fieldset>
+      <div class="field-block">
+        <label class="required" for="category">Nature du signalement</label>
+        <select id="category" required>
+          <option value="">— Choisir une catégorie —</option>
+          <option value="Fraude / Arnaque">Fraude / Arnaque</option>
+          <option value="Pédocriminalité / Exploitation d'enfants">Pédocriminalité / Exploitation d'enfants</option>
+          <option value="Spam">Spam</option>
+          <option value="Vente illégale">Vente illégale</option>
+          <option value="Autre">Autre</option>
+        </select>
+      </div>
+
+      <div class="field-block">
+        <label>Gravité</label>
+        <div class="severity-grid">
+          <div class="sev-opt"><input type="radio" name="sev" id="sevLow" value="Faible"><label for="sevLow">Faible</label></div>
+          <div class="sev-opt"><input type="radio" name="sev" id="sevMed" value="Modérée" checked><label for="sevMed">Modérée</label></div>
+          <div class="sev-opt"><input type="radio" name="sev" id="sevHigh" value="Élevée"><label for="sevHigh">Élevée</label></div>
+          <div class="sev-opt"><input type="radio" name="sev" id="sevCrit" value="Critique — mineurs impliqués"><label for="sevCrit">Critique</label></div>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <div class="field-block">
+        <label class="required" for="waNumber">Numéro ou lien WhatsApp du compte signalé</label>
+        <input type="text" id="waNumber" placeholder="+237... ou https://wa.me/..." required>
+      </div>
+
+      <div class="field-block">
+        <label for="msgContent">Message reçu / envoyé par le compte (texte exact)</label>
+        <textarea id="msgContent" placeholder="Collez ici le message exact que vous avez reçu."></textarea>
+        <div class="hint">Rien n'est pré-rempli automatiquement — copiez-collez vous-même.</div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <div class="field-block">
+        <label class="required">Adresses de destination</label>
+        <div class="dest-list" id="destList"></div>
+      </div>
+    </fieldset>
+
+    <div class="actions">
+      <button type="submit" class="btn btn-gold" id="submitBtn">Envoyer le signalement</button>
+      <span class="status-line" id="statusLine"></span>
+    </div>
+  </form>
+
+  <footer class="foot">
+    Takamura Elite — outil de signalement. Les signalements sont envoyés depuis <b>yenohyenoh209@gmail.com</b> vers les adresses de support WhatsApp.<br>
+    Pour les faits impliquant des mineurs, signalez aussi aux autorités de votre pays sans attendre.
+  </footer>
+</div>
+
+<script>
+/* =========================================================
+   ÉTAT GLOBAL
+   ========================================================= */
+const TOKEN_KEY = 'takamura_token';
+const state = {
+  config: null,
+  plan: 'day',
+  token: localStorage.getItem(TOKEN_KEY) || '',
+  session: null,
+};
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+/* =========================================================
+   INTRO
+   ========================================================= */
+$('#intro').addEventListener('click', () => {
+  $('#intro').classList.add('hidden');
+  boot();
+});
+
+/* =========================================================
+   BOOT
+   ========================================================= */
+async function boot() {
+  await loadConfig();
+  renderPlans();
+  renderDestList();
+
+  // Une session existe déjà ?
+  if (state.token) {
+    const ok = await checkSession(state.token);
+    if (ok) return enterSite();
+  }
+  showPaywall();
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    state.config = await r.json();
+  } catch (e) {
+    state.config = { plans: [], payment: {}, whatsappEmails: [] };
+  }
+}
+
+/* =========================================================
+   PAYWALL
+   ========================================================= */
+function showPaywall() {
+  $('#paywall').hidden = false;
+  $('#paywall').classList.remove('hidden');
+  $('#site').hidden = true;
+}
+function hidePaywall() {
+  $('#paywall').classList.add('hidden');
+}
+
+function renderPlans() {
+  const wrap = $('#plans');
+  wrap.innerHTML = '';
+  const plans = (state.config && state.config.plans) || [];
+  plans.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'plan' + (p.key === state.plan ? ' sel' : '');
+    el.dataset.key = p.key;
+    el.innerHTML = `<div class="p-name">${p.label}</div>
+                    <div class="p-price">${p.price}<small>${p.currency}</small></div>`;
+    el.addEventListener('click', () => {
+      state.plan = p.key;
+      renderPlans();
+      renderPayInfo();
+    });
+    wrap.appendChild(el);
+  });
+  renderPayInfo();
+}
+
+function renderPayInfo() {
+  const p = (state.config?.payment) || {};
+  const plan = (state.config?.plans || []).find(x => x.key === state.plan);
+  $('#payInfo').innerHTML = `
+    <div class="row"><span>Formule</span><b>${plan ? plan.label : '—'}</b></div>
+    <div class="row"><span>Montant</span><b>${plan ? plan.price + ' ' + plan.currency : '—'}</b></div>
+    <div class="row"><span>Orange Money</span><b>${p.orange_money || '—'}</b></div>
+    <div class="row"><span>MTN MoMo</span><b>${p.mtn_momo || '—'}</b></div>
+    <div class="row"><span>Bénéficiaire</span><b>${p.beneficiary || '—'}</b></div>
+  `;
+}
+
+/* ---------- Paiement → session ---------- */
+$('#payBtn').addEventListener('click', async () => {
+  const err = $('#payErr'); err.textContent = '';
+  const name = $('#pName').value.trim();
+  const phone = $('#pPhone').value.trim();
+  const ref = $('#pRef').value.trim();
+
+  if (!name || !phone) { err.textContent = 'Nom et téléphone requis.'; return; }
+
+  const btn = $('#payBtn');
+  btn.disabled = true; btn.textContent = 'Activation…';
+
+  try {
+    const r = await fetch('/api/payment/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan: state.plan, name, phone, transactionRef: ref }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erreur.');
+    state.token = data.token;
+    localStorage.setItem(TOKEN_KEY, data.token);
+    await checkSession(data.token);
+    enterSite();
+  } catch (e) {
+    err.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "J'ai payé — Activer mon accès";
+  }
+});
+
+/* ---------- Code d'accès ---------- */
+$('#codeBtn').addEventListener('click', async () => {
+  const err = $('#codeErr'); err.textContent = '';
+  const code = $('#codeInput').value.trim().toUpperCase();
+  if (!code) { err.textContent = 'Entrez un code.'; return; }
+
+  const btn = $('#codeBtn');
+  btn.disabled = true; btn.textContent = 'Vérification…';
+  try {
+    const r = await fetch('/api/payment/code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json'
