@@ -34,14 +34,14 @@ const TURSO_AUTH_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpY
 const BREVO_API_KEY = env('BREVO_API_KEY'); // ← seule valeur restée en env, comme demandé
 const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans Brevo
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
-const ADMIN_PASSWORD = 'TAKAMURA12345678';
+const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
 // Money Fusion (https://moneyfusion.net) — remplace NotchPay/CamPay.
 // L'URL ci-dessous N'EST PAS un des deux liens "Lien de paiement" du dashboard (ceux-là sont des
 // pages figées pour vendre un produit à prix fixe et ne permettent pas d'associer un user_id).
 // Il faut créer une APPLICATION de paiement (API) dans le dashboard Money Fusion — pas un lien —
 // pour obtenir une URL d'API propre au compte. Remplace la valeur ci-dessous par cette URL.
-const MONEYFUSION_API_URL = 'https://www.pay.moneyfusion.net/DevHub/b9d10a3669a238e9/pay/';
+const MONEYFUSION_API_URL = 'REPLACE_WITH_YOUR_MONEYFUSION_API_URL';
 const PUBLIC_BASE_URL = 'https://takamura-elite2026.up.railway.app';
 const CURRENCY_LABEL = 'FCFA';
 const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'));
@@ -60,6 +60,11 @@ if (ADMIN_PASSWORD.length < 12) {
 }
 if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) console.warn('[BOOT] BREVO_API_KEY / BREVO_SENDER_EMAIL missing: emails will fail.');
 if (!PAYMENTS_ENABLED) console.warn('[BOOT] MONEYFUSION_API_URL not set (still the placeholder value): payments disabled.');
+else {
+  try { new URL(MONEYFUSION_API_URL); } catch {
+    console.error(`[BOOT] MONEYFUSION_API_URL is not a valid URL: "${MONEYFUSION_API_URL}"`);
+  }
+}
 
 const { createClient } = require('@tursodatabase/serverless/compat');
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
@@ -805,7 +810,9 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
         personalInfo: { paymentId: id, userId: user.id },
       });
     } catch (e) {
-      console.error('[payment/start provider]', e.message);
+      // "fetch failed" est un message générique de Node (undici) : la vraie raison (DNS, refus de
+      // connexion, TLS...) est dans e.cause. On la logge pour pouvoir diagnostiquer sans deviner.
+      console.error('[payment/start provider]', e.message, e.cause || '');
       await db.execute({ sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ?`, args: [Date.now(), id] });
       return res.status(502).json({ error: 'Payment could not be started. Please try again.' });
     }
