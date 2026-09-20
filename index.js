@@ -1,12 +1,13 @@
 'use strict';
 
 /* ============================================================================
-   TAKAMURA ELITE — index.js (v2)
-   Accounts + email verification (6-digit code) + AUTOMATED Mobile Money payment
-   (Orange Money / MTN MoMo via CamPay) + reports + history + admin.
+   TAKAMURA ELITE — index.js (v3)
+   Accounts + email verification (6-digit code) + AUTOMATED payment via Money Fusion
+   (moneyfusion.net) + reports + history + admin.
 
    Files: index.html, index.js, package.json only.
-   All secrets come from environment variables (see the ENV block below).
+   Valeurs en dur à la demande — seule BREVO_API_KEY reste en variable d'environnement
+   (voir le bloc ENV ci-dessous et la note de sécurité en fin de réponse).
    ============================================================================ */
 
 const express = require('express');
@@ -16,6 +17,9 @@ const path = require('path');
 const { promisify } = require('util');
 
 const scrypt = promisify(crypto.scrypt);
+// Bibliothèque officielle-écosystème pour l'API de paiement Money Fusion (create + statut).
+// Utilisée pour ne PAS deviner le format JSON exact de leur API non documentée publiquement.
+const { FusionPay } = require('fusionpay');
 
 /* ================================ ENV ====================================== */
 // Valeurs en dur, à la demande — seule BREVO_API_KEY reste en variable d'environnement.
@@ -32,15 +36,15 @@ const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans B
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
 const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
-// CamPay (https://campay.net) — Orange Money + MTN MoMo, Cameroun.
-// Clés DEMO en dur, comme demandé. PAYMENT_ENV = 'DEV' (demo.campay.net, argent fictif) ou
-// 'PROD' (www.campay.net, argent réel) — passe à 'PROD' avec tes clés live avant la mise en prod réelle.
-const PAYMENT_ENV = env('PAYMENT_ENV', 'DEV');
-const PAYMENT_BASE_URL = PAYMENT_ENV === 'PROD' ? 'https://www.campay.net/api' : 'https://demo.campay.net/api';
-const PAYMENT_TOKEN = 'C4-/DDhtTqmIDB7+~JKsrQjk/8wRCOY.OlNsY7Uv'; // jeton d'accès permanent de l'application CamPay
-const PAYMENT_WEBHOOK_KEY = 'JiCvshCUgXZd_PN_TS9Y4Co5IfKYCa6xwzHvKocBLoKBkPeUwkPQEwc_8FFTcmIogcdwxvjZ-rzVdOiYpm2cKA'; // clé webhook CamPay
-const PAYMENT_CURRENCY = env('PAYMENT_CURRENCY', 'XAF');
-const PAYMENTS_ENABLED = !!(PAYMENT_BASE_URL && PAYMENT_TOKEN);
+// Money Fusion (https://moneyfusion.net) — remplace NotchPay/CamPay.
+// L'URL ci-dessous N'EST PAS un des deux liens "Lien de paiement" du dashboard (ceux-là sont des
+// pages figées pour vendre un produit à prix fixe et ne permettent pas d'associer un user_id).
+// Il faut créer une APPLICATION de paiement (API) dans le dashboard Money Fusion — pas un lien —
+// pour obtenir une URL d'API propre au compte. Remplace la valeur ci-dessous par cette URL.
+const MONEYFUSION_API_URL = 'REPLACE_WITH_YOUR_MONEYFUSION_API_URL';
+const PUBLIC_BASE_URL = 'https://takamura-elite2026.up.railway.app';
+const CURRENCY_LABEL = 'FCFA';
+const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'));
 
 const missing = [];
 if (!TURSO_DATABASE_URL) missing.push('TURSO_DATABASE_URL');
@@ -55,8 +59,7 @@ if (ADMIN_PASSWORD.length < 12) {
   process.exit(1);
 }
 if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) console.warn('[BOOT] BREVO_API_KEY / BREVO_SENDER_EMAIL missing: emails will fail.');
-if (!PAYMENTS_ENABLED) console.warn('[BOOT] Payment env vars missing (PAYMENT_TOKEN): payments disabled.');
-if (PAYMENTS_ENABLED && !PAYMENT_WEBHOOK_KEY) console.warn('[BOOT] PAYMENT_WEBHOOK_KEY missing: webhook signature will not be checked (server-side reconcile still protects activation).');
+if (!PAYMENTS_ENABLED) console.warn('[BOOT] MONEYFUSION_API_URL not set (still the placeholder value): payments disabled.');
 
 const { createClient } = require('@tursodatabase/serverless/compat');
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
@@ -71,14 +74,8 @@ const PAYMENT_TTL_MS = 15 * 60 * 1000; // an unpaid payment attempt expires afte
 const RECONCILE_MIN_GAP_MS = 8000;
 
 const PLANS = {
-  day: { key: 'day', label: '24 hours', price: 1000, durationMs: 24 * 60 * 60 * 1000, currency: 'FCFA' },
-  week: { key: 'week', label: '1 week', price: 2500, durationMs: 7 * 24 * 60 * 60 * 1000, currency: 'FCFA' },
-};
-
-// Cameroon mobile prefixes (9 digits, no country code). Used to make sure the number matches the chosen method.
-const METHODS = {
-  orange_money: { key: 'orange_money', label: 'Orange Money', re: /^6(5[5-9]|9\d)\d{6}$/ },
-  mtn_momo: { key: 'mtn_momo', label: 'MTN MoMo', re: /^6(5[0-4]|[78]\d)\d{6}$/ },
+  day: { key: 'day', label: '24 hours', price: 1000, durationMs: 24 * 60 * 60 * 1000, currency: CURRENCY_LABEL },
+  week: { key: 'week', label: '1 week', price: 2500, durationMs: 7 * 24 * 60 * 60 * 1000, currency: CURRENCY_LABEL },
 };
 
 const WHATSAPP_EMAILS = [
@@ -135,6 +132,9 @@ async function initDb() {
   await ensureColumn('users', 'verification_code', 'TEXT');
   await ensureColumn('users', 'verification_expires', 'INTEGER');
   await ensureColumn('users', 'verification_attempts', 'INTEGER NOT NULL DEFAULT 0');
+  // is_free = compte à accès illimité et gratuit (aucun paiement requis, aucune limite de quota).
+  // Sert notamment à donner à l'admin un accès "utilisateur" complet en plus du tableau /admin.
+  await ensureColumn('users', 'is_free', 'INTEGER NOT NULL DEFAULT 0');
 
   await db.execute(`CREATE TABLE IF NOT EXISTS auth_tokens (
     token TEXT PRIMARY KEY,
@@ -217,6 +217,27 @@ async function initDb() {
   }
   await db.execute({ sql: `DELETE FROM auth_tokens WHERE created_at < ?`, args: [Date.now() - TOKEN_TTL_MS] });
   console.log('[DB] Tables ready.');
+}
+
+// Crée (ou met à niveau) un compte utilisateur "normal" pour l'admin, avec accès gratuit illimité,
+// afin qu'il puisse aussi se connecter côté app (pas seulement sur /admin) et tout utiliser sans payer.
+async function ensureAdminUserAccount() {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) return;
+  const email = ADMIN_EMAIL.trim().toLowerCase();
+  const r = await db.execute({ sql: `SELECT id FROM users WHERE email = ?`, args: [email] });
+  const passwordHash = await hashPassword(ADMIN_PASSWORD);
+  if (r.rows[0]) {
+    await db.execute({
+      sql: `UPDATE users SET password_hash = ?, verified = 1, is_free = 1 WHERE id = ?`,
+      args: [passwordHash, r.rows[0].id],
+    });
+  } else {
+    await db.execute({
+      sql: `INSERT INTO users (email, password_hash, verified, is_free, created_at) VALUES (?, ?, 1, 1, ?)`,
+      args: [email, passwordHash, Date.now()],
+    });
+  }
+  console.log(`[DB] Admin app-account ready (${email}), free access enabled.`);
 }
 
 /* ================================ HELPERS ================================== */
@@ -309,12 +330,19 @@ async function getUserFromToken(req) {
   const token = req.header('X-User-Token') || '';
   if (!token || token.length > 200) return null;
   const r = await db.execute({
-    sql: `SELECT u.id, u.email, u.verified, u.created_at
+    sql: `SELECT u.id, u.email, u.verified, u.created_at, u.is_free
           FROM auth_tokens t JOIN users u ON u.id = t.user_id
           WHERE t.token = ? AND t.created_at > ?`,
     args: [sha256(token), Date.now() - TOKEN_TTL_MS],
   });
   return (r.rows && r.rows[0]) || null;
+}
+// Accès "illimité" pour les comptes is_free = 1 : pas de ligne sessions, pas de paiement,
+// pas de limite quotidienne de signalements. Renvoie la même forme que getActiveSession().
+const FREE_PLAN_EXPIRES = Date.now() + 100 * 365 * 24 * 60 * 60 * 1000; // ~100 ans = "illimité"
+async function getAccessForUser(user) {
+  if (user && Number(user.is_free)) return { token: 'free', plan: 'free', expires_at: FREE_PLAN_EXPIRES };
+  return getActiveSession(user.id);
 }
 async function issueToken(userId) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -395,47 +423,43 @@ async function sendAdminPaymentNotice(email, plan, amount, method) {
 }
 
 /* ============================ PAYMENT PROVIDER ============================= */
-// CamPay flow (server side only — the browser never talks to the provider directly):
-//   POST {BASE}/collect/            -> { reference }              (pushes the USSD/Mobile-Money prompt immediately;
-//                                        CamPay auto-detects MTN vs Orange from the phone number, no channel needed)
-//   GET  {BASE}/transaction/{ref}/  -> { status: PENDING|SUCCESSFUL|FAILED, reference, external_reference, ... }
-//   Webhook: POST with fields status/reference/amount/currency/operator/external_reference/signature in the body.
-//            The signature scheme isn't relied on here — every webhook only triggers a server-side re-check via
-//            getTransaction() with our own token, which is the sole source of truth (see reconcile()/applyProviderTx()).
+// Money Fusion flow (server side only — the browser never talks to the provider's API directly,
+// it is only ever redirected to the hosted checkout page returned by makePayment()):
+//   fp.makePayment()        -> { statut, token, message, url }         (url = hosted checkout page)
+//   fp.checkPaymentStatus() -> { statut, data: { tokenPay, Montant, frais, statut: paid|pending|failed|no paid,
+//                                                personal_Info: [...], moyen, numeroTransaction, ... } }
+//   Webhook: Money Fusion POSTs the same "data" shape to webhook_url. Money Fusion does not publicly
+//            document a webhook signature scheme, so — exactly like the payment engine this replaces —
+//            the webhook body is ONLY used to know which payment to re-check. The real confirmation always
+//            comes from calling checkPaymentStatus() ourselves with our own API URL (see reconcile()/applyProviderTx()).
+//   personal_Info is how we associate the transaction with our own user_id/payment_id (see /api/payment/start).
 const provider = {
-  async call(method, p, body) {
-    const r = await fetch(`${PAYMENT_BASE_URL}${p}`, {
-      method,
-      headers: { 'Content-Type': 'application/json', Authorization: `Token ${PAYMENT_TOKEN}` },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(25000),
-    });
-    let data = null;
-    try { data = await r.json(); } catch { /* empty */ }
-    if (!r.ok) throw new Error(`Provider ${method} ${p} failed (${r.status})${data && (data.message || data.detail) ? `: ${data.message || data.detail}` : ''}`);
-    return data || {};
+  async collect({ amount, phone, planLabel, personalInfo }) {
+    const fp = new FusionPay(MONEYFUSION_API_URL);
+    fp.totalPrice(amount)
+      .addArticle(planLabel, amount)
+      .clientName('Takamura Elite')
+      .clientNumber(phone)
+      .addInfo(personalInfo)
+      .returnUrl(`${PUBLIC_BASE_URL}/`)
+      .webhookUrl(`${PUBLIC_BASE_URL}/api/payment/moneyfusion/webhook`);
+    const r = await fp.makePayment();
+    if (!r || r.statut !== true || !r.token || !r.url) throw new Error(`Money Fusion: unexpected response (${r && r.message})`);
+    return { token: String(r.token), url: String(r.url) };
   },
-  // Triggers the Mobile Money prompt directly on the customer's phone — no hosted redirect page,
-  // no channel to pick: CamPay figures out MTN vs Orange from the "from" phone number itself.
-  async collect({ amount, currency, phone, description, externalReference }) {
-    const init = await this.call('POST', '/collect/', {
-      amount: String(amount), currency, from: phone, description, external_reference: externalReference,
-    });
-    const ref = init && init.reference;
-    if (!ref) throw new Error('Provider collect: no reference');
-    return { reference: ref, operator: undefined };
-  },
-  async getTransaction(reference) {
-    const tx = await this.call('GET', `/transaction/${encodeURIComponent(reference)}/`);
-    if (!tx || tx.status == null) return {};
+  async getTransaction(token) {
+    const fp = new FusionPay(MONEYFUSION_API_URL);
+    const r = await fp.checkPaymentStatus(token);
+    if (!r || r.statut !== true || !r.data) return {};
+    const d = r.data;
     return {
-      status: String(tx.status || '').toUpperCase(), // CamPay already returns PENDING/SUCCESSFUL/FAILED
-      reference: tx.reference,
-      amount: Number(tx.amount),
-      currency: tx.currency,
-      external_reference: tx.external_reference,
-      operator: tx.operator,
-      operator_reference: tx.operator_reference || tx.code,
+      status: String(d.statut || '').toLowerCase(), // 'paid' | 'pending' | 'failed' | 'no paid'
+      token: d.tokenPay,
+      amount: Number(d.Montant),
+      fees: Number(d.frais || 0),
+      moyen: d.moyen,
+      numeroTransaction: d.numeroTransaction,
+      personalInfo: Array.isArray(d.personal_Info) ? d.personal_Info[0] : (d.personal_Info || null),
     };
   },
 };
@@ -504,23 +528,26 @@ async function activatePayment(p, tx) {
 // The only place a provider answer changes a payment. Every field is checked against OUR record.
 async function applyProviderTx(p, tx) {
   if (!tx || typeof tx !== 'object') return p;
-  const st = String(tx.status || '').toUpperCase();
+  const st = String(tx.status || '');
   if (p.status === 'paid') return p;
 
-  if (st === 'SUCCESSFUL') {
-    const okRef = String(tx.reference || '') === String(p.provider_ref || '');
-    const okAmount = Number(tx.amount) === Number(p.amount);
-    const okCurrency = String(tx.currency || '').toUpperCase() === String(p.currency).toUpperCase();
-    const ext = tx.external_reference == null ? '' : String(tx.external_reference);
-    const okExt = !ext || ext === p.id;
-    if (!(okRef && okAmount && okCurrency && okExt)) {
-      console.error(`[payment] MISMATCH on ${p.id}: ref=${okRef} amount=${okAmount} currency=${okCurrency} ext=${okExt}`);
+  if (st === 'paid') {
+    const okToken = String(tx.token || '') === String(p.provider_ref || '');
+    const pi = tx.personalInfo || {};
+    const okPaymentId = !pi.paymentId || String(pi.paymentId) === String(p.id);
+    // Money Fusion's "Montant" can be net of its own fees ("frais"), so accept either the raw
+    // amount or amount+fees matching what we asked for — but never anything less than our price.
+    const received = Number(tx.amount || 0);
+    const gross = received + Number(tx.fees || 0);
+    const okAmount = received === Number(p.amount) || gross === Number(p.amount);
+    if (!(okToken && okPaymentId && okAmount)) {
+      console.error(`[payment] MISMATCH on ${p.id}: token=${okToken} paymentId=${okPaymentId} amount=${okAmount} (Montant=${tx.amount} frais=${tx.fees} expected=${p.amount})`);
       await db.execute({ sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ? AND status != 'paid'`, args: [Date.now(), p.id] });
       return getPayment(p.id);
     }
-    return activatePayment(p, tx);
+    return activatePayment(p, { operator: tx.moyen, operator_reference: tx.numeroTransaction });
   }
-  if (st === 'FAILED') {
+  if (st === 'failed' || st === 'no paid') {
     await db.execute({
       sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('pending','processing','cancelled')`,
       args: [Date.now(), p.id],
@@ -591,7 +618,6 @@ app.get(['/', '/index.html'], (_req, res) => {
 app.get('/api/config', (_req, res) => {
   res.json({
     plans: Object.values(PLANS).map((p) => ({ key: p.key, label: p.label, price: p.price, currency: p.currency })),
-    methods: Object.values(METHODS).map((m) => ({ key: m.key, label: m.label })),
     paymentsEnabled: PAYMENTS_ENABLED,
     paymentTtlMinutes: Math.round(PAYMENT_TTL_MS / 60000),
     destinations: WHATSAPP_EMAILS.map((email) => ({ email, note: DEST_NOTES[email] || '' })),
@@ -713,7 +739,7 @@ app.get('/api/me', async (req, res) => {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated.' });
     await repairPaidSessions(user.id);
-    const sess = await getActiveSession(user.id);
+    const sess = await getAccessForUser(user);
     const reports = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ?`, [user.id]);
     let pendingPayment = null;
     if (!sess) {
@@ -725,7 +751,7 @@ app.get('/api/me', async (req, res) => {
       if (r.rows[0]) pendingPayment = publicPayment(r.rows[0]);
     }
     res.json({
-      user: { id: user.id, email: user.email, createdAt: Number(user.created_at) },
+      user: { id: user.id, email: user.email, createdAt: Number(user.created_at), isFree: !!Number(user.is_free) },
       hasAccess: !!sess,
       pending: !!pendingPayment,
       pendingPayment,
@@ -739,24 +765,24 @@ app.get('/api/me', async (req, res) => {
 });
 
 /* ---------------------------------- PAYMENT --------------------------------- */
-// Creates a REAL transaction at the provider. The client only chooses plan + method + phone;
+// Creates a REAL transaction at the provider. The client only chooses plan + phone;
 // price, currency and duration are decided here. Nothing the client sends can grant access.
+// personal_Info = { paymentId, userId } is how the eventual confirmation is tied back to this
+// exact user account (see applyProviderTx) — the user never types their own user_id anywhere.
 app.post('/api/payment/start', limitPayStart, async (req, res) => {
   try {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Please sign in first.' });
     if (!user.verified) return res.status(403).json({ error: 'Account not verified.' });
+    if (Number(user.is_free)) return res.status(400).json({ error: 'This account already has free unlimited access.' });
     if (!PAYMENTS_ENABLED) return res.status(503).json({ error: 'Payments are temporarily unavailable.' });
 
     const plan = Object.prototype.hasOwnProperty.call(PLANS, req.body?.plan) ? PLANS[req.body.plan] : null;
-    const method = Object.prototype.hasOwnProperty.call(METHODS, req.body?.method) ? METHODS[req.body.method] : null;
     if (!plan) return res.status(400).json({ error: 'Unknown plan.' });
-    if (!method) return res.status(400).json({ error: 'Unknown payment method.' });
 
     let phone = String(req.body?.phone || '').replace(/[\s().-]/g, '');
     phone = phone.replace(/^\+?237/, '');
     if (!/^6\d{8}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid 9-digit Cameroon mobile number.' });
-    if (!method.re.test(phone)) return res.status(400).json({ error: `This number does not look like an ${method.label} number.` });
 
     // A new attempt supersedes older open ones (the provider stays the source of truth if the old one is paid).
     await db.execute({
@@ -768,15 +794,15 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
     const now = Date.now();
     await db.execute({
       sql: `INSERT INTO payments (id, user_id, plan, amount, currency, method, provider, phone_hint, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'campay', ?, 'pending', ?, ?)`,
-      args: [id, user.id, plan.key, plan.price, PAYMENT_CURRENCY, method.key, `***${phone.slice(-3)}`, now, now],
+            VALUES (?, ?, ?, ?, ?, 'moneyfusion', 'moneyfusion', ?, 'pending', ?, ?)`,
+      args: [id, user.id, plan.key, plan.price, plan.currency, `***${phone.slice(-3)}`, now, now],
     });
 
     let started;
     try {
       started = await provider.collect({
-        amount: plan.price, currency: PAYMENT_CURRENCY, phone: `237${phone}`,
-        description: `Takamura Elite ${plan.label}`, externalReference: id,
+        amount: plan.price, phone: `237${phone}`, planLabel: `Takamura Elite — ${plan.label}`,
+        personalInfo: { paymentId: id, userId: user.id },
       });
     } catch (e) {
       console.error('[payment/start provider]', e.message);
@@ -784,11 +810,13 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
       return res.status(502).json({ error: 'Payment could not be started. Please try again.' });
     }
     await db.execute({
-      sql: `UPDATE payments SET provider_ref = ?, status = 'processing', operator = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
-      args: [String(started.reference), cleanLine(started.operator, 20), Date.now(), id],
+      sql: `UPDATE payments SET provider_ref = ?, status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'`,
+      args: [started.token, Date.now(), id],
     });
-    // CamPay pushes the Mobile Money prompt directly to the customer's phone: no USSD code to display.
-    res.json({ payment: publicPayment(await getPayment(id)), ussd: '' });
+    // Unlike the previous provider, Money Fusion has no direct USSD push: the browser must be sent
+    // to the hosted checkout page it returns. The frontend redirects to checkoutUrl, then polls
+    // /api/payment/status/:id (also picked up automatically on return via /api/me's pendingPayment).
+    res.json({ payment: publicPayment(await getPayment(id)), checkoutUrl: started.url });
   } catch (e) {
     console.error('[payment/start]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -813,32 +841,28 @@ app.get('/api/payment/status/:id', limitPayStatus, async (req, res) => {
   }
 });
 
-// Provider callback (POST, per CamPay). CamPay's webhook signature scheme is best-effort here (see note
-// below), so the payload itself is NEVER trusted for the decision: it only tells us which payment to
-// re-check, and the transaction is then re-fetched from the provider with our own token (getTransaction)
-// and compared to our record (amount, currency, reference) in applyProviderTx(). Replays are harmless
-// (compare-and-set in activatePayment).
-app.post('/api/payment/webhook', limitWebhook, async (req, res) => {
+// Money Fusion webhook. Money Fusion does not publicly document a signature scheme for this payload,
+// so — like the reconciliation logic above — it is NEVER trusted for the decision on its own: it only
+// tells us which payment to re-check, and the transaction is then re-fetched from Money Fusion with our
+// own API URL (checkPaymentStatus) and compared to our record (token, personal_Info, amount) in
+// applyProviderTx(). Replays are harmless (compare-and-set in activatePayment).
+app.post('/api/payment/moneyfusion/webhook', limitWebhook, async (req, res) => {
   try {
     if (!PAYMENTS_ENABLED) return res.status(503).json({ error: 'Unavailable.' });
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    // If CamPay's dashboard gives you a documented signature header/field, verify it here before trusting
-    // even this much of the payload. For now we just use it, if present, as a loose sanity filter.
-    if (PAYMENT_WEBHOOK_KEY && body.signature && String(body.signature) !== PAYMENT_WEBHOOK_KEY) {
-      console.warn('[webhook] unexpected signature value, proceeding to server-side re-check anyway');
-    }
-    const reference = cleanLine(body.reference, 80);
-    const externalRef = cleanLine(body.external_reference, 60);
-    if (!reference && !externalRef) return res.status(400).json({ error: 'Invalid payload.' });
+    const token = cleanLine(body.tokenPay || body.token, 80);
+    const piRaw = Array.isArray(body.personal_Info) ? body.personal_Info[0] : body.personal_Info;
+    const paymentId = cleanLine(piRaw && piRaw.paymentId, 60);
+    if (!token && !paymentId) return res.status(400).json({ error: 'Invalid payload.' });
 
     let p = null;
-    if (UUID_RE.test(externalRef)) p = await getPayment(externalRef);
-    if (!p && reference) {
-      const r = await db.execute({ sql: `SELECT * FROM payments WHERE provider_ref = ?`, args: [reference] });
+    if (UUID_RE.test(paymentId)) p = await getPayment(paymentId);
+    if (!p && token) {
+      const r = await db.execute({ sql: `SELECT * FROM payments WHERE provider_ref = ?`, args: [token] });
       p = r.rows[0] || null;
     }
     if (!p) return res.json({ ok: true }); // unknown to us: acknowledge, do nothing
-    if (reference && p.provider_ref && reference !== p.provider_ref) return res.json({ ok: true });
+    if (token && p.provider_ref && token !== p.provider_ref) return res.json({ ok: true });
     if (p.status !== 'paid') await reconcile(p, { force: true });
     res.json({ ok: true });
   } catch (e) {
@@ -858,7 +882,8 @@ app.post('/api/report', limitReport, async (req, res) => {
   try {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated.' });
-    const sess = await getActiveSession(user.id);
+    const isFree = !!Number(user.is_free);
+    const sess = await getAccessForUser(user);
     if (!sess) return res.status(403).json({ error: 'No active access. Please purchase a plan.' });
 
     const category = String(req.body?.category || '');
@@ -870,8 +895,10 @@ app.post('/api/report', limitReport, async (req, res) => {
     if (!SEVERITIES.includes(severity)) return res.status(400).json({ error: 'Invalid severity.' });
     if (!WA_TARGET_RE.test(waNumber)) return res.status(400).json({ error: 'Invalid WhatsApp number or link.' });
 
-    const sentToday = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ? AND created_at > ?`, [user.id, Date.now() - 24 * 60 * 60 * 1000]);
-    if (sentToday >= MAX_REPORTS_PER_DAY) return res.status(429).json({ error: 'Daily report limit reached.' });
+    if (!isFree) {
+      const sentToday = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ? AND created_at > ?`, [user.id, Date.now() - 24 * 60 * 60 * 1000]);
+      if (sentToday >= MAX_REPORTS_PER_DAY) return res.status(429).json({ error: 'Daily report limit reached.' });
+    }
 
     const requested = Array.isArray(req.body?.destinations) ? req.body.destinations : [];
     const dests = requested.length ? [...new Set(requested.filter((d) => WHATSAPP_EMAILS.includes(d)))] : WHATSAPP_EMAILS;
@@ -942,7 +969,7 @@ app.get('/admin', limitAdmin, adminAuth, async (_req, res) => {
   try {
     const now = Date.now();
     const [u, pay, legacy, r, stats] = await Promise.all([
-      db.execute(`SELECT id, email, verified, created_at FROM users ORDER BY created_at DESC LIMIT 200`),
+      db.execute(`SELECT id, email, verified, is_free, created_at FROM users ORDER BY created_at DESC LIMIT 200`),
       db.execute(`SELECT p.id, p.plan, p.amount, p.currency, p.method, p.provider_ref, p.status, p.created_at, p.paid_at, u.email
                   FROM payments p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC LIMIT 200`),
       db.execute(`SELECT s.token, s.plan, s.price, s.payer_name, s.payer_phone, s.transaction_ref, s.created_at, u.email
@@ -999,17 +1026,17 @@ section[hidden]{display:none}
 <div class="card"><small>Active subscriptions</small><strong>${activeSubs}</strong></div>
 <div class="card"><small>Pending payments</small><strong>${pendingPay}</strong></div>
 <div class="card"><small>Reports</small><strong>${totalReports}</strong></div>
-<div class="card"><small>Confirmed revenue</small><strong>${money(revenue)} <span style="font-size:13px;color:var(--mu)">${esc(PAYMENT_CURRENCY)}</span></strong></div>
+<div class="card"><small>Confirmed revenue</small><strong>${money(revenue)} <span style="font-size:13px;color:var(--mu)">${esc(CURRENCY_LABEL)}</span></strong></div>
 </div>
-<p class="note">Payments are confirmed automatically by the provider (webhook + server-side verification). ${PAYMENTS_ENABLED ? '' : '<strong style="color:var(--er)">Payment environment variables are missing: payments are disabled.</strong>'}</p>
+<p class="note">Payments are confirmed automatically by the provider (webhook + server-side verification). ${PAYMENTS_ENABLED ? '' : '<strong style="color:var(--er)">MONEYFUSION_API_URL is not set: payments are disabled.</strong>'}</p>
 </section>
 
-<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Created</th><th></th></tr>
-${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${esc(fmtDate(x.created_at))}</td><td><button class="act" data-reset-user="${esc(x.id)}">Reset password</button><button class="act no" data-delete-user="${esc(x.id)}">Delete</button></td></tr>`).join('')}</table></div></section>
+<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Free access</th><th>Created</th><th></th></tr>
+${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${Number(x.is_free) ? badge('active') : '—'}</td><td>${esc(fmtDate(x.created_at))}</td><td><button class="act" data-toggle-free="${esc(x.id)}" data-free-state="${Number(x.is_free) ? 1 : 0}">${Number(x.is_free) ? 'Revoke free access' : 'Grant free access'}</button><button class="act" data-reset-user="${esc(x.id)}">Reset password</button><button class="act no" data-delete-user="${esc(x.id)}">Delete</button></td></tr>`).join('')}</table></div></section>
 
 <section id="t-payments" hidden>
 <div class="scroll"><table><tr><th>User</th><th>Plan</th><th>Amount</th><th>Method</th><th>Transaction</th><th>Status</th><th>Date</th><th></th></tr>
-${pay.rows.map((x) => `<tr><td>${esc(x.email)}</td><td>${esc(x.plan)}</td><td>${esc(money(x.amount))} ${esc(x.currency)}</td><td>${esc((METHODS[x.method] || {}).label || x.method)}</td><td class="mono">${esc(x.provider_ref || '—')}</td><td>${badge(x.status)}</td><td>${esc(fmtDate(x.paid_at || x.created_at))}</td><td>${
+${pay.rows.map((x) => `<tr><td>${esc(x.email)}</td><td>${esc(x.plan)}</td><td>${esc(money(x.amount))} ${esc(x.currency)}</td><td>${esc(x.method)}</td><td class="mono">${esc(x.provider_ref || '—')}</td><td>${badge(x.status)}</td><td>${esc(fmtDate(x.paid_at || x.created_at))}</td><td>${
       x.status !== 'paid' && x.provider_ref ? `<button class="act" data-recheck="${esc(x.id)}">Re-check</button>` : ''}</td></tr>`).join('')}</table></div>
 <h2>Legacy manual requests (${legacy.rows.length})</h2>
 <p class="note">Old manual-declaration requests only. Kept as an exceptional support tool; new payments never appear here.</p>
@@ -1031,10 +1058,12 @@ document.addEventListener('click',async e=>{
   if(b.dataset.action==='activate'&&!confirm('Grant access manually? Use only for exceptional support cases.'))return;
   if(b.dataset.deleteUser&&!confirm('Delete this user permanently? This cannot be undone. Their reports and payment history are kept for records but will no longer show a linked account.'))return;
   if(b.dataset.resetUser&&!confirm('Generate a new temporary password for this user? Their current sessions will be signed out.'))return;
+  if(b.dataset.toggleFree&&!confirm(b.dataset.freeState==='1'?'Revoke free unlimited access for this user?':'Grant free unlimited access to this user? They will no longer need to pay.'))return;
   b.disabled=true;
   try{
     if(b.dataset.recheck)await post('/admin/payments/recheck',{id:b.dataset.recheck});
     else if(b.dataset.deleteUser){await post('/admin/users/delete',{id:b.dataset.deleteUser});location.reload();return;}
+    else if(b.dataset.toggleFree){await post('/admin/users/set-free',{id:b.dataset.toggleFree,isFree:b.dataset.freeState!=='1'});location.reload();return;}
     else if(b.dataset.resetUser){const d=await post('/admin/users/reset-password',{id:b.dataset.resetUser});alert((d.emailed?'Emailed to the user.\\n\\n':'Could not email the user — share this manually.\\n\\n')+'Temporary password: '+d.tempPassword);b.disabled=false;return;}
     else await post('/admin/sessions/decision',{token:b.dataset.token,action:b.dataset.action});
     location.reload();
@@ -1087,6 +1116,20 @@ app.post('/admin/users/reset-password', limitAdmin, adminAuth, requireAdminXhr, 
     res.json({ ok: true, tempPassword, emailed });
   } catch (e) {
     console.error('[admin user reset]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.post('/admin/users/set-free', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const id = Number(req.body?.id);
+    const isFree = req.body?.isFree ? 1 : 0;
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid request.' });
+    const r = await db.execute({ sql: `UPDATE users SET is_free = ? WHERE id = ?`, args: [isFree, id] });
+    if (!rowsAffected(r)) return res.status(404).json({ error: 'User not found.' });
+    res.json({ ok: true, isFree: !!isFree });
+  } catch (e) {
+    console.error('[admin set-free]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
 });
@@ -1150,6 +1193,7 @@ app.use((err, _req, res, _next) => {
 /* ================================== BOOT =================================== */
 (async () => {
   await initDb();
+  await ensureAdminUserAccount();
   await sweepPayments();
   setInterval(sweepPayments, 60 * 1000).unref();
   app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (payments ${PAYMENTS_ENABLED ? 'ENABLED' : 'DISABLED'})`));

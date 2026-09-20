@@ -341,7 +341,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       <h2>Three steps, one traceable case.</h2>
       <div class="steps3">
         <div class="card"><b>01</b><h3>Create &amp; verify</h3><p>Register with your email and confirm it with a 6-digit code.</p></div>
-        <div class="card"><b>02</b><h3>Activate access</h3><p>Choose 24 hours or 1 week and pay with Orange Money or MTN MoMo. Access activates automatically once the payment is confirmed.</p></div>
+        <div class="card"><b>02</b><h3>Activate access</h3><p>Choose 24 hours or 1 week and pay securely with Money Fusion. Access activates automatically once the payment is confirmed.</p></div>
         <div class="card"><b>03</b><h3>Submit a report</h3><p>Describe the account and evidence in a guided form. You receive a case ID and keep a history.</p></div>
       </div>
     </section>
@@ -400,7 +400,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 <div id="v-checkout" class="view center" hidden>
   <div class="co">
     <div class="brand" style="justify-content:center;margin-bottom:22px"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
-    <div class="stepper" id="coStepper" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="stepper" id="coStepper" aria-hidden="true"><i></i><i></i></div>
     <div class="panel" id="coBody"></div>
     <p class="alt" style="margin-top:18px"><span id="coWho" style="color:var(--tx3)"></span> · <button type="button" id="coLogout">Sign out</button></p>
   </div>
@@ -436,7 +436,7 @@ const store = {
 };
 const S = {
   cfg: null, token: store.get(), me: null, verifyEmail: '', section: 'overview',
-  plan: 'day', method: '', phone: '', pay: { id: '', timer: null, view: 'plan' },
+  plan: 'day', phone: '', pay: { id: '', timer: null, view: 'plan' },
   rep: null, resendT: null,
 };
 const SVG = (name, cls) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'i' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true'); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', '#i-' + name); s.append(u); return s; };
@@ -497,7 +497,7 @@ function showView(name) {
 async function ensureCfg() { if (!S.cfg) S.cfg = await api('/api/config'); return S.cfg; }
 function forget() { S.token = ''; store.clear(); S.me = null; }
 const planOf = (k) => (S.cfg.plans.find((p) => p.key === k) || { label: k, price: 0, currency: 'FCFA' });
-const methodOf = (k) => (S.cfg.methods.find((m) => m.key === k) || { label: k });
+
 
 /* ============================== NAVIGATION ============================== */
 document.addEventListener('click', (e) => {
@@ -652,7 +652,7 @@ function enterCheckout(opts = {}) {
   showView('checkout'); $('coWho').textContent = S.me.user.email;
   stopPoll();
   if (S.me.pendingPayment && !opts.fresh) {
-    const p = S.me.pendingPayment; S.plan = p.plan; S.method = p.method; S.pay.id = p.id;
+    const p = S.me.pendingPayment; S.plan = p.plan; S.pay.id = p.id;
     return renderPaying('waiting'), pollPayment();
   }
   renderPlan();
@@ -672,68 +672,53 @@ function renderPlan() {
         h('span', { style: 'color:var(--tx3);font-size:13px', text: p.key === 'day' ? 'Best for a single case' : 'Best for ongoing reporting' }));
       return b;
     })),
-    h('button', { class: 'btn primary block', style: 'margin-top:22px', type: 'button', disabled: !S.cfg.paymentsEnabled, onclick: renderMethod }, 'Continue to payment'),
-  ]);
-}
-function renderMethod() {
-  stepper(1); S.pay.view = 'method';
-  const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
-  const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
-  const wrap = h('div', { class: 'opts', role: 'radiogroup', 'aria-label': 'Payment method' }, S.cfg.methods.map((m) => {
-    const b = h('button', { type: 'button', class: 'opt', role: 'radio', 'aria-checked': String(S.method === m.key), onclick: () => { S.method = m.key; [...wrap.children].forEach((c) => c.setAttribute('aria-checked', String(c === b))); phone.focus(); } },
-      h('span', { class: 'rd' }), h('span', { class: 't' }, h('b', { text: m.label }), h('span', { text: 'Mobile Money · Cameroon' })));
-    return b;
-  }));
-  coStep([
-    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderPlan, text: '← Back' }),
-    h('h2', { text: 'Choose payment method' }), h('p', { class: 'sub', text: 'You will receive a confirmation prompt on this number.' }),
-    wrap,
-    h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money number' }), h('div', { class: 'inp' }, phone), err),
-    h('button', { class: 'btn primary block', type: 'button', onclick: () => {
-      const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
-      if (!S.method) { err.textContent = 'Select a payment method.'; return; }
-      if (!/^6\d{8}$/.test(digits)) { phone.setAttribute('aria-invalid', 'true'); err.textContent = 'Enter a valid 9-digit Cameroon number.'; phone.focus(); return; }
-      S.phone = digits; renderReview();
-    } }, 'Continue'),
+    h('button', { class: 'btn primary block', style: 'margin-top:22px', type: 'button', disabled: !S.cfg.paymentsEnabled, onclick: renderReview }, 'Continue to payment'),
   ]);
 }
 function renderReview(errMsg) {
-  stepper(2); S.pay.view = 'review';
+  stepper(1); S.pay.view = 'review';
   const p = planOf(S.plan);
+  const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
+  const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
   const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Pay securely'));
   btn.addEventListener('click', async () => {
+    const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
+    if (!/^6\d{8}$/.test(digits)) { phone.setAttribute('aria-invalid', 'true'); err.textContent = 'Enter a valid 9-digit Cameroon number.'; phone.focus(); return; }
+    S.phone = digits;
     setLoading(btn, true);
-    renderPaying('init');
     try {
-      const d = await api('/api/payment/start', { method: 'POST', body: { plan: S.plan, method: S.method, phone: S.phone } });
-      S.pay.id = d.payment.id; renderPaying('waiting', d.ussd); pollPayment();
+      const d = await api('/api/payment/start', { method: 'POST', body: { plan: S.plan, phone: S.phone } });
+      S.pay.id = d.payment.id;
+      // Money Fusion has no direct USSD push: send the browser to its hosted checkout page.
+      // It redirects back to this same site once the payer is done, and /api/me's
+      // pendingPayment then resumes the "waiting" screen + polling automatically.
+      window.location.href = d.checkoutUrl;
     } catch (e) {
+      setLoading(btn, false);
       if (e.status === 401) { forget(); return showView('auth'); }
       renderReview(e.message);
     }
   });
   coStep([
-    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderMethod, text: '← Back' }),
+    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderPlan, text: '← Back' }),
     h('h2', { text: 'Review & pay' }), h('p', { class: 'sub', text: 'Check the details, then confirm.' }),
     errMsg ? h('div', { class: 'banner', role: 'alert', text: errMsg }) : null,
     h('div', { class: 'recap' },
       h('div', {}, h('span', { text: 'Amount' }), h('b', { text: `${fmtMoney(p.price)} ${p.currency}` })),
-      h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label })),
-      h('div', {}, h('span', { text: 'Payment method' }), h('b', { text: methodOf(S.method).label })),
-      h('div', {}, h('span', { text: 'Number' }), h('b', { class: 'mono', text: `+237 ${S.phone}` }))),
+      h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label }))),
+    h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money / contact number' }), h('div', { class: 'inp' }, phone), err),
     btn,
-    h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by a licensed provider. Access is granted only after the provider confirms it.' }),
+    h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by Money Fusion. Access is granted only after the payment is confirmed.' }),
   ]);
 }
 const TL = [['init', 'Initializing payment...'], ['waiting', 'Waiting for payment...'], ['confirmed', 'Payment confirmed ✓'], ['active', 'Access activated']];
-function renderPaying(stage, ussd) {
-  stepper(2); S.pay.view = 'paying';
+function renderPaying(stage) {
+  stepper(1); S.pay.view = 'paying';
   const idx = TL.findIndex((t) => t[0] === stage);
   const list = h('ul', { class: 'tl', 'aria-label': 'Payment progress' }, TL.map((t, k) => h('li', { class: k < idx ? 'ok' : k === idx ? (stage === 'active' || stage === 'confirmed' ? 'ok' : 'cur') : '' }, h('span', { class: 'd' }, SVG('check')), t[1])));
   coStep([
-    h('h2', { text: stage === 'init' ? 'Starting payment' : stage === 'waiting' ? 'Confirm on your phone' : 'Payment received' }),
-    h('p', { class: 'sub', text: stage === 'waiting' ? 'Approve the Mobile Money prompt on your phone. This page updates automatically.' : 'Please keep this page open.' }),
-    stage === 'waiting' && ussd ? h('div', { class: 'note' }, 'If no prompt appears, dial: ', h('b', { text: ussd })) : null,
+    h('h2', { text: stage === 'init' ? 'Starting payment' : stage === 'waiting' ? 'Confirming your payment' : 'Payment received' }),
+    h('p', { class: 'sub', text: stage === 'waiting' ? 'This page updates automatically once Money Fusion confirms the payment.' : 'Please keep this page open.' }),
     list,
     stage === 'waiting' ? h('button', { class: 'btn block', type: 'button', onclick: () => { stopPoll(); renderReview(); }, text: 'Cancel and go back' }) : null,
   ]);
