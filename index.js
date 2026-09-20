@@ -39,7 +39,7 @@ const PAYMENT_PUBLIC_KEY = 'pk_test.gMC7Rw8w0fJ9d0kL83wvncrPnWEpA2BfpNYSG1u5uNe2
 const PAYMENT_SECRET = 'sk_test.WRBFyHWS767dp59gIXhweqf2JTcINgzxaw6IrW7Plbok8vQMGDcT8urPHg22xxwveIIqrtwIylnJXLqodVB7rDFxDISXdU7xl1mZV5VVXWWZD6DHQeJjnylPXc5g6'; // clé privée : sert aux appels serveur
 const PAYMENT_WEBHOOK_SECRET = 'hsk_test.3DlBdqkXZ4kHkN5MRO2dGeFTvIrhjG88nIn97JgDt6tUxTtrNCrgriEH9xhbYJL8Iy39FSuilCGPpcKUzeGvILbIrS6rG52vZNg9KsAiJdHBXfvnFdsbaJLJoa4Vs'; // hash key du webhook
 const PAYMENT_CURRENCY = env('PAYMENT_CURRENCY', 'XAF');
-const PAYMENTS_ENABLED = !!(PAYMENT_BASE_URL && PAYMENT_SECRET && PAYMENT_WEBHOOK_SECRET);
+const PAYMENTS_ENABLED = !!(PAYMENT_BASE_URL && PAYMENT_PUBLIC_KEY && PAYMENT_WEBHOOK_SECRET);
 
 const missing = [];
 if (!TURSO_DATABASE_URL) missing.push('TURSO_DATABASE_URL');
@@ -406,7 +406,9 @@ const provider = {
   async call(method, p, body) {
     const r = await fetch(`${PAYMENT_BASE_URL}${p}`, {
       method,
-      headers: { 'Content-Type': 'application/json', Authorization: PAYMENT_SECRET },
+      // Standard endpoints (create/charge/read a payment) authenticate with the PUBLIC key.
+      // The private key is reserved for high-risk endpoints (transfers, balance) via X-Grant.
+      headers: { 'Content-Type': 'application/json', Authorization: PAYMENT_PUBLIC_KEY },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(25000),
     });
