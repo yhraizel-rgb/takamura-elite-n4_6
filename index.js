@@ -34,7 +34,7 @@ const TURSO_AUTH_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpY
 const BREVO_API_KEY = env('BREVO_API_KEY'); // ← seule valeur restée en env, comme demandé
 const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans Brevo
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
-const ADMIN_PASSWORD = 'TAKAMURA';
+const ADMIN_PASSWORD = 'TAKAMURA12345678';
 
 // Money Fusion (https://moneyfusion.net) — remplace NotchPay/CamPay.
 // L'URL ci-dessous N'EST PAS un des deux liens "Lien de paiement" du dashboard (ceux-là sont des
