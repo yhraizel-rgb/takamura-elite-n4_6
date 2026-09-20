@@ -414,7 +414,7 @@ const provider = {
     });
     let data = null;
     try { data = await r.json(); } catch { /* empty */ }
-    if (!r.ok) throw new Error(`Provider ${method} ${p} failed (${r.status})`);
+    if (!r.ok) throw new Error(`Provider ${method} ${p} failed (${r.status})${data && data.message ? `: ${data.message}` : ''}`);
     return data || {};
   },
   // Initializes the payment, then immediately triggers the Mobile Money prompt on the
@@ -430,7 +430,7 @@ const provider = {
     const ref = init && init.transaction && init.transaction.reference;
     if (!ref) throw new Error('Provider collect: no reference');
     await this.call('POST', `/payments/${encodeURIComponent(ref)}`, {
-      channel, data: { phone: `+${phone}` },
+      channel, data: { account_number: `+${phone}` },
     });
     return { reference: ref, operator: channel === 'cm.mtn' ? 'MTN' : 'Orange' };
   },
@@ -1025,8 +1025,8 @@ section[hidden]{display:none}
 <p class="note">Payments are confirmed automatically by the provider (webhook + server-side verification). ${PAYMENTS_ENABLED ? '' : '<strong style="color:var(--er)">Payment environment variables are missing: payments are disabled.</strong>'}</p>
 </section>
 
-<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Created</th></tr>
-${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${esc(fmtDate(x.created_at))}</td></tr>`).join('')}</table></div></section>
+<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Created</th><th></th></tr>
+${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${esc(fmtDate(x.created_at))}</td><td><button class="act" data-reset-user="${esc(x.id)}">Reset password</button><button class="act no" data-delete-user="${esc(x.id)}">Delete</button></td></tr>`).join('')}</table></div></section>
 
 <section id="t-payments" hidden>
 <div class="scroll"><table><tr><th>User</th><th>Plan</th><th>Amount</th><th>Method</th><th>Transaction</th><th>Status</th><th>Date</th><th></th></tr>
@@ -1050,9 +1050,13 @@ document.addEventListener('click',async e=>{
   const b=e.target.closest('button.act');if(!b)return;
   if(b.dataset.action==='reject'&&!confirm('Reject this request?'))return;
   if(b.dataset.action==='activate'&&!confirm('Grant access manually? Use only for exceptional support cases.'))return;
+  if(b.dataset.deleteUser&&!confirm('Delete this user permanently? This cannot be undone. Their reports and payment history are kept for records but will no longer show a linked account.'))return;
+  if(b.dataset.resetUser&&!confirm('Generate a new temporary password for this user? Their current sessions will be signed out.'))return;
   b.disabled=true;
   try{
     if(b.dataset.recheck)await post('/admin/payments/recheck',{id:b.dataset.recheck});
+    else if(b.dataset.deleteUser){await post('/admin/users/delete',{id:b.dataset.deleteUser});location.reload();return;}
+    else if(b.dataset.resetUser){const d=await post('/admin/users/reset-password',{id:b.dataset.resetUser});alert((d.emailed?'Emailed to the user.\\n\\n':'Could not email the user — share this manually.\\n\\n')+'Temporary password: '+d.tempPassword);b.disabled=false;return;}
     else await post('/admin/sessions/decision',{token:b.dataset.token,action:b.dataset.action});
     location.reload();
   }catch(err){alert(err.message);b.disabled=false;}
@@ -1062,6 +1066,49 @@ document.addEventListener('click',async e=>{
   } catch (e) {
     console.error('[admin]', e.message);
     res.status(500).send('Server error.');
+  }
+});
+
+app.post('/admin/users/delete', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const id = Number(req.body?.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid request.' });
+    await db.execute({ sql: `DELETE FROM auth_tokens WHERE user_id = ?`, args: [id] });
+    const r = await db.execute({ sql: `DELETE FROM users WHERE id = ?`, args: [id] });
+    if (!rowsAffected(r)) return res.status(404).json({ error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[admin user delete]', e.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+app.post('/admin/users/reset-password', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+  try {
+    const id = Number(req.body?.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid request.' });
+    const u = await db.execute({ sql: `SELECT email FROM users WHERE id = ?`, args: [id] });
+    const user = u.rows && u.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const tempPassword = crypto.randomBytes(9).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'Tk' + Date.now();
+    await db.execute({ sql: `UPDATE users SET password_hash = ? WHERE id = ?`, args: [await hashPassword(tempPassword), id] });
+    await db.execute({ sql: `DELETE FROM auth_tokens WHERE user_id = ?`, args: [id] }); // force sign-out everywhere
+
+    let emailed = false;
+    try {
+      await mailer.sendMail({
+        to: user.email,
+        subject: 'Takamura Elite — Your password has been reset',
+        text: `An administrator reset your password.\n\nTemporary password: ${tempPassword}\n\nPlease sign in and change your password as soon as possible.\n\n— Takamura Elite`,
+      });
+      emailed = true;
+    } catch (e) { console.error('[admin reset mail]', e.message); }
+
+    res.json({ ok: true, tempPassword, emailed });
+  } catch (e) {
+    console.error('[admin user reset]', e.message);
+    res.status(500).json({ error: 'Server error.' });
   }
 });
 
