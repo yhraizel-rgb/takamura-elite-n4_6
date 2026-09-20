@@ -680,8 +680,6 @@ function renderReview(errMsg) {
   const p = planOf(S.plan);
   const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
   const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
-  const reminder = h('div', { class: 'note', style: 'margin-top:14px' },
-    'Sur la page Money Fusion qui va s\u2019ouvrir, utilise EXACTEMENT ce même numéro — c\u2019est ce qui permet d\u2019activer ton accès automatiquement.');
   const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Pay securely'));
   btn.addEventListener('click', async () => {
     const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
@@ -709,7 +707,6 @@ function renderReview(errMsg) {
       h('div', {}, h('span', { text: 'Amount' }), h('b', { text: `${fmtMoney(p.price)} ${p.currency}` })),
       h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label }))),
     h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money / contact number' }), h('div', { class: 'inp' }, phone), err),
-    reminder,
     btn,
     h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by Money Fusion. Access is granted only after the payment is confirmed.' }),
   ]);
