@@ -34,14 +34,14 @@ const TURSO_AUTH_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpY
 const BREVO_API_KEY = env('BREVO_API_KEY'); // ← seule valeur restée en env, comme demandé
 const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans Brevo
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
-const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
+const ADMIN_PASSWORD = 'TAKAMURA';
 
 // Money Fusion (https://moneyfusion.net) — remplace NotchPay/CamPay.
 // L'URL ci-dessous N'EST PAS un des deux liens "Lien de paiement" du dashboard (ceux-là sont des
 // pages figées pour vendre un produit à prix fixe et ne permettent pas d'associer un user_id).
 // Il faut créer une APPLICATION de paiement (API) dans le dashboard Money Fusion — pas un lien —
 // pour obtenir une URL d'API propre au compte. Remplace la valeur ci-dessous par cette URL.
-const MONEYFUSION_API_URL = 'REPLACE_WITH_YOUR_MONEYFUSION_API_URL';
+const MONEYFUSION_API_URL = 'https://www.pay.moneyfusion.net/DevHub/b9d10a3669a238e9/pay/';
 const PUBLIC_BASE_URL = 'https://takamura-elite2026.up.railway.app';
 const CURRENCY_LABEL = 'FCFA';
 const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'));
