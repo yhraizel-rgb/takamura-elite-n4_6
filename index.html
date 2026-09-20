@@ -680,6 +680,8 @@ function renderReview(errMsg) {
   const p = planOf(S.plan);
   const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
   const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
+  const reminder = h('div', { class: 'note', style: 'margin-top:14px' },
+    'Sur la page Money Fusion qui va s\u2019ouvrir, utilise EXACTEMENT ce même numéro — c\u2019est ce qui permet d\u2019activer ton accès automatiquement.');
   const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Pay securely'));
   btn.addEventListener('click', async () => {
     const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
@@ -689,10 +691,10 @@ function renderReview(errMsg) {
     try {
       const d = await api('/api/payment/start', { method: 'POST', body: { plan: S.plan, phone: S.phone } });
       S.pay.id = d.payment.id;
-      // Money Fusion has no direct USSD push: send the browser to its hosted checkout page.
-      // It redirects back to this same site once the payer is done, and /api/me's
-      // pendingPayment then resumes the "waiting" screen + polling automatically.
-      window.location.href = d.checkoutUrl;
+      // On ne redirige plus tout de suite : on montre d'abord un rappel du numéro à réutiliser,
+      // pour éviter que le client tape un numéro différent sur la page Money Fusion (ce qui
+      // casserait le rapprochement automatique côté serveur).
+      renderPhoneReminder(digits, d.checkoutUrl);
     } catch (e) {
       setLoading(btn, false);
       if (e.status === 401) { forget(); return showView('auth'); }
@@ -707,8 +709,26 @@ function renderReview(errMsg) {
       h('div', {}, h('span', { text: 'Amount' }), h('b', { text: `${fmtMoney(p.price)} ${p.currency}` })),
       h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label }))),
     h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money / contact number' }), h('div', { class: 'inp' }, phone), err),
+    reminder,
     btn,
     h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by Money Fusion. Access is granted only after the payment is confirmed.' }),
+  ]);
+}
+// Écran-tampon affiché juste avant la redirection : redit le numéro à utiliser, en gros, pour que
+// le client ne puisse pas le manquer avant de quitter le site.
+function renderPhoneReminder(digits, checkoutUrl) {
+  const pretty = digits.replace(/(\d{1})(\d{2})(\d{3})(\d{3})/, '$1$2 $3 $4');
+  const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Continuer vers le paiement'));
+  btn.addEventListener('click', () => { window.location.href = checkoutUrl; });
+  coStep([
+    h('h2', { text: 'Un dernier point important' }),
+    h('p', { class: 'sub', text: 'Tu vas être redirigé vers la page de paiement Money Fusion.' }),
+    h('div', { class: 'note', style: 'text-align:center;font-size:16px' },
+      'Utilise CE numéro sur la page suivante :',
+      h('div', { style: 'font-size:26px;font-weight:600;letter-spacing:.02em;margin-top:8px', text: pretty })),
+    h('p', { style: 'margin:14px 0 18px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Un numéro différent empêche l\u2019activation automatique de ton accès.' }),
+    btn,
+    h('button', { class: 'btn ghost sm', style: 'margin-top:10px;width:100%', type: 'button', onclick: () => renderReview(), text: '← Modifier le numéro' }),
   ]);
 }
 const TL = [['init', 'Initializing payment...'], ['waiting', 'Waiting for payment...'], ['confirmed', 'Payment confirmed ✓'], ['active', 'Access activated']];

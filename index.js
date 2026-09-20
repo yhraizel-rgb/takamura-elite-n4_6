@@ -44,7 +44,16 @@ const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 const MONEYFUSION_API_URL = 'https://www.pay.moneyfusion.net/DevHub/b9d10a3669a238e9/pay/';
 const PUBLIC_BASE_URL = 'https://takamura-elite2026.up.railway.app';
 const CURRENCY_LABEL = 'FCFA';
-const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'));
+// Liens de paiement fixes (dashboard Money Fusion → "Lien de paiement"), un par plan.
+// Contrairement à l'API (MONEYFUSION_API_URL), un lien fixe ne permet pas de transmettre notre
+// propre paymentId/userId : la mise en relation avec le bon compte se fait a posteriori (voir
+// matchPendingPayment) via le webhook + une vérification serveur-à-serveur (jamais le webhook seul).
+const PLAN_LINKS = {
+  day: 'https://my.moneyfusion.net/6aaf50f00a9a5a976474e386',
+  week: 'https://my.moneyfusion.net/6aaf512e0a9a5a976474e478',
+};
+const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'))
+  && Object.values(PLAN_LINKS).every((u) => u && !u.startsWith('REPLACE_'));
 
 const missing = [];
 if (!TURSO_DATABASE_URL) missing.push('TURSO_DATABASE_URL');
@@ -59,10 +68,10 @@ if (ADMIN_PASSWORD.length < 12) {
   process.exit(1);
 }
 if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) console.warn('[BOOT] BREVO_API_KEY / BREVO_SENDER_EMAIL missing: emails will fail.');
-if (!PAYMENTS_ENABLED) console.warn('[BOOT] MONEYFUSION_API_URL not set (still the placeholder value): payments disabled.');
+if (!PAYMENTS_ENABLED) console.warn('[BOOT] MONEYFUSION_API_URL or a PLAN_LINKS entry is missing/placeholder: payments disabled.');
 else {
-  try { new URL(MONEYFUSION_API_URL); } catch {
-    console.error(`[BOOT] MONEYFUSION_API_URL is not a valid URL: "${MONEYFUSION_API_URL}"`);
+  for (const [k, u] of [['MONEYFUSION_API_URL', MONEYFUSION_API_URL], ...Object.entries(PLAN_LINKS)]) {
+    try { new URL(u); } catch { console.error(`[BOOT] ${k} is not a valid URL: "${u}"`); }
   }
 }
 
@@ -465,6 +474,12 @@ const provider = {
       moyen: d.moyen,
       numeroTransaction: d.numeroTransaction,
       personalInfo: Array.isArray(d.personal_Info) ? d.personal_Info[0] : (d.personal_Info || null),
+      // Présents pour les paiements via "Lien de paiement" (pas d'API/personal_Info) : servent au
+      // rapprochement par numéro/nom dans matchPendingPayment(). Noms de champs non documentés
+      // publiquement par Money Fusion — on prend toutes les variantes plausibles.
+      numeroSend: d.numeroSend || d.numero || d.phone || '',
+      nomclient: d.nomclient || d.nom || d.name || '',
+      email: d.email || d.mail || '',
     };
   },
 };
@@ -582,6 +597,45 @@ async function sweepPayments() {
       args: [Date.now(), Date.now() - PAYMENT_TTL_MS],
     });
   } catch (e) { console.error('[sweep]', e.message); }
+}
+
+// Rapprochement pour les paiements initiés via un "Lien de paiement" fixe (pas de personal_Info) :
+// on cherche, parmi les paiements 'pending'/'processing' encore non réclamés (provider_ref NULL) et
+// dans la fenêtre PAYMENT_TTL_MS, celui dont le montant correspond ET dont les 3 derniers chiffres du
+// numéro saisi côté Money Fusion correspondent à ceux saisis sur notre site (phone_hint = "***678").
+// Si le résultat n'est pas unique et sans ambiguïté, on n'active RIEN — on log pour résolution manuelle
+// plutôt que de risquer de créditer le mauvais compte.
+async function matchPendingPayment(tx) {
+  const received = Number(tx.amount || 0);
+  const gross = received + Number(tx.fees || 0);
+  const cutoff = Date.now() - PAYMENT_TTL_MS;
+  const r = await db.execute({
+    sql: `SELECT * FROM payments WHERE provider_ref IS NULL AND status IN ('pending','processing')
+          AND created_at > ? AND (amount = ? OR amount = ?)
+          ORDER BY created_at DESC`,
+    args: [cutoff, received, gross],
+  });
+  let candidates = r.rows || [];
+  if (!candidates.length) {
+    console.warn(`[payment] No pending payment matches an incoming link payment (amount=${tx.amount}, numero=${tx.numeroSend || '—'}, token=${tx.token}). Check /admin manually.`);
+    return null;
+  }
+  const suffix = String(tx.numeroSend || '').replace(/\D/g, '').slice(-3);
+  if (suffix) {
+    const byPhone = candidates.filter((c) => String(c.phone_hint || '').slice(-3) === suffix);
+    if (byPhone.length) candidates = byPhone;
+  }
+  if (candidates.length !== 1) {
+    console.warn(`[payment] AMBIGUOUS match for incoming link payment (amount=${tx.amount}, numero=${tx.numeroSend || '—'}, token=${tx.token}): ${candidates.length} candidates. Check /admin manually.`);
+    return null;
+  }
+  // Réservation atomique : si deux webhooks arrivent en même temps, un seul gagne (provider_ref est UNIQUE).
+  const claim = await db.execute({
+    sql: `UPDATE payments SET provider_ref = ?, status = 'processing', updated_at = ? WHERE id = ? AND provider_ref IS NULL AND status IN ('pending','processing')`,
+    args: [tx.token, Date.now(), candidates[0].id],
+  });
+  if (!rowsAffected(claim)) return null; // déjà réclamé entre-temps
+  return getPayment(candidates[0].id);
 }
 
 /* ================================== APP ==================================== */
@@ -799,31 +853,15 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
     const now = Date.now();
     await db.execute({
       sql: `INSERT INTO payments (id, user_id, plan, amount, currency, method, provider, phone_hint, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'moneyfusion', 'moneyfusion', ?, 'pending', ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, 'moneyfusion-link', 'moneyfusion', ?, 'pending', ?, ?)`,
       args: [id, user.id, plan.key, plan.price, plan.currency, `***${phone.slice(-3)}`, now, now],
     });
 
-    let started;
-    try {
-      started = await provider.collect({
-        amount: plan.price, phone: `237${phone}`, planLabel: `Takamura Elite — ${plan.label}`,
-        personalInfo: { paymentId: id, userId: user.id },
-      });
-    } catch (e) {
-      // "fetch failed" est un message générique de Node (undici) : la vraie raison (DNS, refus de
-      // connexion, TLS...) est dans e.cause. On la logge pour pouvoir diagnostiquer sans deviner.
-      console.error('[payment/start provider]', e.message, e.cause || '');
-      await db.execute({ sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ?`, args: [Date.now(), id] });
-      return res.status(502).json({ error: 'Payment could not be started. Please try again.' });
-    }
-    await db.execute({
-      sql: `UPDATE payments SET provider_ref = ?, status = 'processing', updated_at = ? WHERE id = ? AND status = 'pending'`,
-      args: [started.token, Date.now(), id],
-    });
-    // Unlike the previous provider, Money Fusion has no direct USSD push: the browser must be sent
-    // to the hosted checkout page it returns. The frontend redirects to checkoutUrl, then polls
-    // /api/payment/status/:id (also picked up automatically on return via /api/me's pendingPayment).
-    res.json({ payment: publicPayment(await getPayment(id)), checkoutUrl: started.url });
+    // Lien de paiement fixe : pas d'appel serveur à Money Fusion ici, le client est redirigé
+    // directement sur la page hébergée. Le rapprochement avec ce paiement se fait plus tard,
+    // côté webhook, via matchPendingPayment() (montant + 3 derniers chiffres du numéro).
+    // On lui redemande donc le MÊME numéro whatsapp que celui utilisé ci-dessus sur Money Fusion.
+    res.json({ payment: publicPayment(await getPayment(id)), checkoutUrl: PLAN_LINKS[plan.key] });
   } catch (e) {
     console.error('[payment/start]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -867,6 +905,15 @@ app.post('/api/payment/moneyfusion/webhook', limitWebhook, async (req, res) => {
     if (!p && token) {
       const r = await db.execute({ sql: `SELECT * FROM payments WHERE provider_ref = ?`, args: [token] });
       p = r.rows[0] || null;
+    }
+    if (!p && token) {
+      // Pas de correspondance directe : probablement un paiement via lien fixe (pas de personal_Info).
+      // On récupère la transaction authentique auprès de Money Fusion (jamais le webhook seul), puis
+      // on tente de la rapprocher d'un paiement en attente sur notre site.
+      let tx;
+      try { tx = await provider.getTransaction(token); } catch (e) { console.error('[webhook lookup]', e.message); return res.json({ ok: true }); }
+      if (tx && tx.status === 'paid') p = await matchPendingPayment(tx);
+      if (!p) return res.json({ ok: true }); // rien trouvé ou ambigu : voir logs [payment] ci-dessus
     }
     if (!p) return res.json({ ok: true }); // unknown to us: acknowledge, do nothing
     if (token && p.provider_ref && token !== p.provider_ref) return res.json({ ok: true });
