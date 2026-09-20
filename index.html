@@ -1,911 +1,963 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TAKAMURA ELITE — Signalement</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
+<meta name="robots" content="noindex">
+<title>Takamura Elite — Secure Reporting Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#08090c; --bg-2:#0d0f14; --card:#15171d; --card-hover:#1a1d24;
-    --border:#242730; --border-hover:#33373f;
-    --text:#f2f3f5; --text-2:#a7abb5; --text-3:#6b6f7a;
-    --accent:#ff6a1a; --accent-2:#ffb15c; --accent-dim:#ff6a1a22;
-    --danger:#ef4444; --danger-dim:#ef444422;
-    --success:#22c55e; --success-dim:#22c55e22;
-    --radius:18px; --radius-sm:12px;
-    --ease:cubic-bezier(.16,1,.3,1);
-    color-scheme:dark;
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0}
-  body{
-    background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden; position:relative;
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-    line-height:1.55; -webkit-font-smoothing:antialiased;
-  }
-  h1,h2,h3{font-family:'Sora','Inter',sans-serif;letter-spacing:-.02em;margin:0}
-  a{color:var(--accent)}
-  ::selection{background:var(--accent-dim)}
-  ::-webkit-scrollbar{width:6px;height:6px}
-  ::-webkit-scrollbar-thumb{background:var(--border-hover);border-radius:10px}
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap">
+<style nonce="{{NONCE}}">
+:root{
+  --bg:#0a0a0b; --bg2:#0e0e10; --surface:#121214; --surface2:#17171a; --surface3:#1d1d21;
+  --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --tx:#ece8df; --tx2:#a09d95; --tx3:#6e6c67;
+  --gold:#c9a66b; --gold2:#e0c48a; --gold-dim:rgba(201,166,107,.12); --gold-line:rgba(201,166,107,.32);
+  --ok:#6fbf8e; --ok-dim:rgba(111,191,142,.12); --err:#d9736b; --err-dim:rgba(217,115,107,.12);
+  --r:14px; --r2:10px; --ease:cubic-bezier(.2,.8,.2,1);
+  --f-ui:'Geist',ui-sans-serif,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --f-disp:'Instrument Serif','Iowan Old Style',Georgia,serif;
+  --f-mono:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--tx);font:400 15px/1.55 var(--f-ui);min-height:100vh;min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(1000px 520px at 78% -8%,rgba(201,166,107,.07),transparent 60%),radial-gradient(800px 480px at -10% 105%,rgba(201,166,107,.04),transparent 60%);background-attachment:fixed}
+[hidden]{display:none!important}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0}
+a{color:var(--gold2);text-decoration:none}a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:6px}
+::selection{background:var(--gold-dim)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--f-mono)}
+.eyebrow{font:500 11px/1 var(--f-mono);letter-spacing:.18em;text-transform:uppercase;color:var(--tx3)}
+.disp{font-family:var(--f-disp);font-weight:400;letter-spacing:-.015em}
 
-  /* ===== fond animé (aucune image externe) ===== */
-  body::before, body::after{
-    content:""; position:fixed; z-index:0; pointer-events:none; border-radius:50%;
-    filter:blur(90px); opacity:.55; animation:driftOrb 18s ease-in-out infinite;
-  }
-  body::before{width:520px;height:520px;background:radial-gradient(circle,#ff6a1a55 0%,transparent 70%);top:-120px;left:-100px}
-  body::after{width:600px;height:600px;background:radial-gradient(circle,#7c3aed3a 0%,transparent 70%);bottom:-160px;right:-120px;animation-delay:3s}
-  @keyframes driftOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-25px) scale(1.08)}}
-  .grain{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.035;
-    background-image:radial-gradient(#fff 1px,transparent 1px);background-size:26px 26px}
+/* ---------- views & motion ---------- */
+.view{animation:enter .5s var(--ease) both}
+@keyframes enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{to{background-position:-200% 0}}
+@keyframes draw{from{stroke-dashoffset:var(--len,600)}to{stroke-dashoffset:0}}
+.step-in{animation:enter .35s var(--ease) both}
 
-  @keyframes fadeInUp{0%{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
-  @keyframes fadeIn{0%{opacity:0}to{opacity:1}}
-  @keyframes pulseSoft{0%,100%{box-shadow:0 0 0 0 var(--accent-dim)}50%{box-shadow:0 0 0 8px transparent}}
-  @keyframes spin{to{transform:rotate(360deg)}}
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;height:44px;padding:0 20px;border-radius:11px;font-weight:500;font-size:14.5px;border:1px solid var(--line2);background:var(--surface2);color:var(--tx);transition:background .2s,border-color .2s,transform .15s,opacity .2s;white-space:nowrap;text-decoration:none!important;position:relative}
+.btn:hover{background:var(--surface3);border-color:rgba(255,255,255,.2)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:linear-gradient(180deg,#d6b67c,#b8945a);color:#16110a;border-color:rgba(255,235,190,.35);font-weight:600;box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 8px 24px -10px rgba(201,166,107,.5)}
+.btn.primary:hover{background:linear-gradient(180deg,#e0c48a,#c29d62)}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--tx2)}.btn.ghost:hover{color:var(--tx);background:var(--surface)}
+.btn.sm{height:36px;padding:0 14px;font-size:13.5px;border-radius:9px}
+.btn.block{width:100%}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn.loading{pointer-events:none;color:transparent!important}
+.btn.loading::after{content:"";position:absolute;width:17px;height:17px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;color:var(--tx);animation:spin .7s linear infinite}
+.btn.primary.loading::after{color:#16110a}
+.btn.loading .sp-label{visibility:hidden}
+.btn.busy{pointer-events:none;opacity:.85}
+.btn.busy::before{content:"";width:15px;height:15px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;animation:spin .7s linear infinite}
 
-  /* ===== INTRO ===== */
-  #intro{
-    position:fixed;inset:0;z-index:60;cursor:pointer;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:28px;text-align:center;padding:24px;
-    background:radial-gradient(circle at 50% 30%,#15171d 0%,var(--bg) 70%);
-    transition:opacity .5s var(--ease),visibility .5s var(--ease);
-  }
-  #intro.hidden{opacity:0;visibility:hidden;pointer-events:none}
-  #intro .intro-crest{
-    width:78px;height:78px;border-radius:22px;display:flex;align-items:center;justify-content:center;
-    background:linear-gradient(150deg,var(--accent-2),var(--accent));
-    font-family:'Sora',sans-serif;font-weight:800;font-size:32px;color:#0a0a0c;
-    box-shadow:0 12px 34px -8px #ff6a1a66;animation:fadeInUp .7s var(--ease) both;
-  }
-  #intro .intro-title{font-size:clamp(26px,5vw,40px);font-weight:800;letter-spacing:-.03em;
-    animation:fadeInUp .7s var(--ease) .08s both}
-  #intro .intro-title em{font-style:normal;color:var(--accent)}
-  #intro .intro-sub{color:var(--text-2);max-width:420px;font-size:14.5px;animation:fadeInUp .7s var(--ease) .16s both}
-  #intro .tap-hint{
-    margin-top:10px;padding:14px 32px;border:1px solid var(--border-hover);border-radius:999px;
-    background:var(--card);color:var(--text);font-size:13px;font-weight:600;letter-spacing:.04em;
-    animation:fadeInUp .7s var(--ease) .24s both,pulseSoft 2.2s ease-in-out infinite;
-    transition:all .25s var(--ease);
-  }
-  #intro:hover .tap-hint{border-color:var(--accent);color:var(--accent-2);transform:translateY(-2px)}
+/* ---------- landing ---------- */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:18px clamp(20px,5vw,56px);max-width:1240px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:11px}
+.brand svg{width:26px;height:26px;color:var(--gold);fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.brand b{font:500 12px/1 var(--f-mono);letter-spacing:.24em}
+.brand b span{color:var(--gold);margin-left:.5em}
+.hero{max-width:1240px;margin:0 auto;padding:clamp(28px,7vh,90px) clamp(20px,5vw,56px) 40px;display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}
+.badge{display:inline-flex;align-items:center;gap:9px;padding:7px 13px;border:1px solid var(--gold-line);border-radius:99px;font:500 10.5px/1 var(--f-mono);letter-spacing:.18em;color:var(--gold2);background:var(--gold-dim)}
+.badge i{width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.hero h1{font-family:var(--f-disp);font-weight:400;font-size:clamp(46px,7.4vw,92px);line-height:.98;letter-spacing:-.025em;margin:24px 0 22px}
+.hero h1 em{color:var(--gold2);font-style:italic}
+.hero p.lead{max-width:520px;color:var(--tx2);font-size:clamp(15.5px,1.6vw,17.5px)}
+.cta{display:flex;gap:10px;flex-wrap:wrap;margin-top:32px}
+.trust{display:flex;gap:22px 28px;flex-wrap:wrap;margin-top:40px;color:var(--tx3);font-size:13px}
+.trust span{display:inline-flex;align-items:center;gap:8px}.trust svg{color:var(--gold);width:16px;height:16px}
+.viz{display:flex;justify-content:center}.viz svg{width:100%;max-width:440px;height:auto;overflow:visible}
+.viz .ring{fill:none;stroke:var(--line2);stroke-width:1}
+.viz .ring.g{stroke:var(--gold-line);stroke-dasharray:2 6}
+.viz .ln{stroke:var(--gold-line);stroke-width:1;stroke-dasharray:var(--len,120);animation:draw 1.6s var(--ease) .3s both}
+.viz .nd{fill:var(--bg);stroke:var(--gold);stroke-width:1.4}
+.viz text{font:500 9.5px var(--f-mono);letter-spacing:.2em;fill:var(--tx2);text-transform:uppercase}
+.viz .core{fill:var(--surface);stroke:var(--gold-line)}
+.how{max-width:1240px;margin:0 auto;padding:60px clamp(20px,5vw,56px) 20px}
+.how h2{font-family:var(--f-disp);font-weight:400;font-size:clamp(30px,4vw,44px);letter-spacing:-.02em;margin:12px 0 30px}
+.steps3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.012));border:1px solid var(--line);border-radius:var(--r);padding:22px;box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 20px 40px -28px rgba(0,0,0,.8)}
+.steps3 .card b{font:500 11px var(--f-mono);letter-spacing:.16em;color:var(--gold)}
+.steps3 .card h3{font-size:17px;font-weight:500;margin:14px 0 6px}.steps3 .card p{color:var(--tx2);font-size:14px}
+.foot{max-width:1240px;margin:0 auto;padding:44px clamp(20px,5vw,56px) 56px;color:var(--tx3);font-size:12.5px;border-top:1px solid var(--line);margin-top:56px}
 
-  /* ===== OVERLAYS (auth / verify / paywall) ===== */
-  #auth,#verify,#paywall{
-    position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
-    padding:40px 18px;overflow-y:auto;background:var(--bg);
-  }
-  #auth[hidden],#verify[hidden],#paywall[hidden]{display:none}
+/* ---------- auth ---------- */
+.center{min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 18px}
+.auth-wrap{width:100%;max-width:410px}
+.auth-wrap .brand{justify-content:center;margin-bottom:28px}
+.panel{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));border:1px solid var(--line);border-radius:18px;padding:30px 26px;box-shadow:0 30px 60px -30px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.04) inset;backdrop-filter:blur(8px)}
+.panel h2{font-family:var(--f-disp);font-weight:400;font-size:32px;letter-spacing:-.02em;line-height:1.1}
+.panel .sub{color:var(--tx2);font-size:14px;margin:8px 0 24px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:13px;color:var(--tx2);margin-bottom:7px;font-weight:450}
+.inp{position:relative}
+.inp input,.inp textarea,.plain{width:100%;height:46px;padding:0 14px;background:var(--bg2);border:1px solid var(--line2);border-radius:11px;outline:0;transition:border-color .2s,box-shadow .2s,background .2s;font-size:15px}
+.inp textarea{height:auto;min-height:150px;padding:13px 14px;resize:vertical;line-height:1.55}
+.inp input::placeholder,.inp textarea::placeholder{color:var(--tx3)}
+.inp input:hover,.inp textarea:hover{border-color:rgba(255,255,255,.2)}
+.inp input:focus,.inp textarea:focus{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-dim)}
+.inp input[aria-invalid=true],.inp textarea[aria-invalid=true]{border-color:var(--err);box-shadow:0 0 0 3px var(--err-dim)}
+.inp .eye{position:absolute;right:4px;top:4px;width:38px;height:38px;display:grid;place-items:center;color:var(--tx3);border-radius:8px}.inp .eye:hover{color:var(--tx)}
+.inp.pw input{padding-right:46px}
+.ferr{color:var(--err);font-size:12.5px;margin-top:6px;min-height:0}.ferr:empty{display:none}
+.banner{padding:11px 14px;border-radius:10px;font-size:13.5px;margin-bottom:16px;border:1px solid var(--err);background:var(--err-dim);color:#f0b4ae}
+.banner.ok{border-color:rgba(111,191,142,.4);background:var(--ok-dim);color:#b6e2c7}
+.alt{text-align:center;color:var(--tx2);font-size:13.5px;margin-top:20px}
+.alt button{color:var(--gold2);font-weight:500}.alt button:hover{text-decoration:underline}
+.otp{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin:6px 0 4px}
+.otp input{height:56px;text-align:center;font:500 22px var(--f-mono);padding:0;background:var(--bg2);border:1px solid var(--line2);border-radius:11px;outline:0;transition:border-color .2s,box-shadow .2s;width:100%;caret-color:var(--gold)}
+.otp input:focus{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-dim)}
+.otp.bad input{border-color:var(--err);animation:shake .35s}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.mailpill{display:inline-flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);padding:6px 12px;border-radius:99px;font-size:13px;color:var(--tx);word-break:break-all;max-width:100%}
 
-  .pay-wrap{width:100%;max-width:460px;margin:0 auto;animation:fadeInUp .5s var(--ease) both}
-  .panel{
-    background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-    padding:34px 30px;position:relative;box-shadow:0 20px 60px -20px #000000b3;
-  }
+/* ---------- app shell ---------- */
+.shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh;min-height:100dvh}
+.side{position:sticky;top:0;height:100vh;height:100dvh;display:flex;flex-direction:column;padding:22px 16px;border-right:1px solid var(--line);background:rgba(10,10,11,.7);backdrop-filter:blur(10px)}
+.side .brand{padding:4px 10px 26px}
+.nav-l{display:flex;flex-direction:column;gap:2px}
+.nav-l button{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:9px;color:var(--tx2);font-size:14.5px;text-align:left;transition:background .2s,color .2s;position:relative}
+.nav-l button:hover{background:var(--surface);color:var(--tx)}
+.nav-l button[aria-current=page]{background:var(--surface2);color:var(--tx)}
+.nav-l button[aria-current=page]::before{content:"";position:absolute;left:-16px;top:10px;bottom:10px;width:2px;border-radius:2px;background:var(--gold)}
+.side-foot{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:12px}
+.subcard{padding:12px 13px;border-radius:11px;background:var(--surface);border:1px solid var(--line);font-size:12.5px}
+.subcard .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.subcard small{color:var(--tx3);font:500 10px var(--f-mono);letter-spacing:.14em}
+.subcard div.t{margin-top:5px;color:var(--tx2)}
+.who{font-size:12.5px;color:var(--tx3);padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.main{min-width:0;padding:clamp(20px,4vw,44px) clamp(18px,4vw,52px) 60px;max-width:1120px;width:100%}
+.top{display:none}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:99px;font:500 10.5px/1 var(--f-mono);letter-spacing:.16em;border:1px solid var(--line2);color:var(--tx2)}
+.pill.ok{color:var(--ok);border-color:rgba(111,191,142,.35);background:var(--ok-dim)}
+.pill.ok::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.pill.err{color:var(--err);border-color:rgba(217,115,107,.35);background:var(--err-dim)}
+.pill.gold{color:var(--gold2);border-color:var(--gold-line);background:var(--gold-dim)}
+.pagehead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:28px}
+.pagehead h1{font-family:var(--f-disp);font-weight:400;font-size:clamp(32px,4.4vw,46px);letter-spacing:-.02em;line-height:1.05}
+.pagehead h1 small{display:block;font:400 14px var(--f-ui);color:var(--tx2);letter-spacing:0;margin-bottom:8px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.stat{padding:18px}.stat .eyebrow{display:block;margin-bottom:12px}
+.stat strong{font-size:24px;font-weight:500;letter-spacing:-.02em;display:block;line-height:1.15}
+.stat span.s{display:block;color:var(--tx3);font-size:12.5px;margin-top:4px}
+.hero-card{display:flex;align-items:center;justify-content:space-between;gap:22px;flex-wrap:wrap;padding:clamp(22px,3vw,34px);border-color:var(--gold-line);background:linear-gradient(135deg,rgba(201,166,107,.09),rgba(255,255,255,.012) 60%)}
+.hero-card h2{font-family:var(--f-disp);font-weight:400;font-size:clamp(26px,3.2vw,36px);letter-spacing:-.02em}
+.hero-card p{color:var(--tx2);max-width:460px;margin-top:6px;font-size:14.5px}
+.sec-h{display:flex;justify-content:space-between;align-items:center;margin:34px 0 14px}.sec-h h3{font-size:15px;font-weight:500}
+.list{display:flex;flex-direction:column;gap:8px}
+.item{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.item .a{min-width:0}.item .a b{display:block;font-weight:500;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.item .a span{color:var(--tx3);font-size:12.5px}
+.empty{padding:34px 20px;text-align:center;border:1px dashed var(--line2);border-radius:14px;color:var(--tx3);font-size:14px}
+.sk{border-radius:10px;height:56px;background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;animation:shimmer 1.4s linear infinite}
 
-  .brand-lg{display:flex;align-items:center;gap:14px;margin-bottom:26px}
-  .brand-lg .crest{width:46px;height:46px;border-radius:14px;
-    background:linear-gradient(150deg,var(--accent-2),var(--accent));
-    display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;
-    font-weight:800;font-size:19px;color:#0a0a0c;flex-shrink:0}
-  .brand-lg .t{font-family:'Sora',sans-serif;font-size:19px;font-weight:800;letter-spacing:-.01em;line-height:1.15}
-  .brand-lg .t em{font-style:normal;color:var(--accent);display:block;font-size:11px;font-weight:700;
-    letter-spacing:.16em;text-transform:uppercase;margin-top:2px}
+/* ---------- wizard ---------- */
+.prog{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:26px}
+.prog div{font:500 10.5px var(--f-mono);letter-spacing:.1em;color:var(--tx3);padding-top:10px;border-top:2px solid var(--line2);transition:color .3s,border-color .3s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog div.done{border-color:var(--gold-line);color:var(--tx2)}
+.prog div.cur{border-color:var(--gold);color:var(--gold2)}
+.wiz{max-width:720px}
+.wiz h2{font-family:var(--f-disp);font-weight:400;font-size:clamp(26px,3.4vw,34px);letter-spacing:-.02em;margin:0 0 6px}
+.wiz .hint{color:var(--tx2);font-size:14px;margin-bottom:22px}
+.opts{display:grid;gap:10px}
+.opt{display:flex;align-items:center;gap:14px;width:100%;text-align:left;padding:16px 18px;border:1px solid var(--line2);border-radius:12px;background:var(--surface);transition:border-color .2s,background .2s,transform .15s;min-height:60px}
+.opt:hover{border-color:rgba(255,255,255,.22);background:var(--surface2)}
+.opt[aria-checked=true]{border-color:var(--gold);background:linear-gradient(180deg,var(--gold-dim),rgba(201,166,107,.03))}
+.opt .rd{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--tx3);flex:none;display:grid;place-items:center;transition:border-color .2s}
+.opt[aria-checked=true] .rd{border-color:var(--gold)}
+.opt[aria-checked=true] .rd::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--gold)}
+.opt.cb .rd{border-radius:5px}.opt.cb[aria-checked=true] .rd{background:var(--gold)}.opt.cb[aria-checked=true] .rd::after{background:none;width:9px;height:5px;border:solid #16110a;border-width:0 0 2px 2px;border-radius:0;transform:rotate(-45deg) translate(1px,-1px)}
+.opt .t{flex:1;min-width:0}.opt .t b{display:block;font-weight:500;font-size:15px}.opt .t span{display:block;color:var(--tx3);font-size:12.5px;margin-top:2px;word-break:break-word}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.opts.two{grid-template-columns:1fr 1fr}
+.nav-btns{display:flex;justify-content:space-between;gap:10px;margin-top:26px}
+.sum{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
+.sum div{display:grid;grid-template-columns:110px 1fr;gap:14px;padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px}
+.sum div:last-child{border:0}.sum dt{color:var(--tx3);font:500 10.5px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;padding-top:3px}.sum dd{word-break:break-word;white-space:pre-wrap}
+.blk-t{font:500 11px var(--f-mono);letter-spacing:.16em;color:var(--tx3);text-transform:uppercase;margin:26px 0 12px}
+.cnt{text-align:right;color:var(--tx3);font-size:12px;margin-top:6px}
+.done-box{text-align:center;padding:clamp(28px,5vw,54px) 20px}
+.tick{width:64px;height:64px;border-radius:50%;margin:0 auto 22px;display:grid;place-items:center;background:var(--ok-dim);border:1px solid rgba(111,191,142,.35);color:var(--ok)}
+.tick svg{width:28px;height:28px;stroke-width:2}
+.tick.bad{background:var(--err-dim);border-color:rgba(217,115,107,.35);color:var(--err)}
+.caseid{display:inline-flex;align-items:center;gap:10px;margin:18px 0 26px;padding:10px 14px;border:1px solid var(--line2);border-radius:10px;background:var(--bg2);font:500 14px var(--f-mono);letter-spacing:.06em}
 
-  .panel h2{font-size:21px;color:var(--text);margin-bottom:6px;font-weight:700}
-  .panel .sub{font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:22px}
+/* ---------- table ---------- */
+.tw{border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{font:500 10.5px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--tx3);text-align:left;padding:13px 16px;background:var(--surface2);border-bottom:1px solid var(--line)}
+td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cid{font-family:var(--f-mono);font-size:12.5px;color:var(--gold2)}
 
-  .tabs{display:flex;gap:4px;margin-bottom:24px;background:var(--bg-2);border:1px solid var(--border);
-    border-radius:999px;padding:4px}
-  .tab{flex:1;text-align:center;padding:9px 8px;cursor:pointer;font-size:13px;font-weight:600;
-    color:var(--text-2);border-radius:999px;transition:all .2s var(--ease);user-select:none}
-  .tab:hover{color:var(--text)}
-  .tab.active{color:#fff;background:linear-gradient(135deg,var(--accent),#ff8c42);box-shadow:0 4px 14px -4px #ff6a1a66}
+/* ---------- checkout ---------- */
+.co{width:100%;max-width:560px}
+.co .stepper{display:flex;gap:8px;justify-content:center;margin-bottom:22px}
+.co .stepper i{width:34px;height:3px;border-radius:2px;background:var(--line2);transition:background .3s}.co .stepper i.on{background:var(--gold)}
+.plans{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.plan{padding:20px 18px;border:1px solid var(--line2);border-radius:14px;background:var(--surface);text-align:left;transition:border-color .2s,background .2s;min-height:118px;display:flex;flex-direction:column;gap:10px}
+.plan:hover{border-color:rgba(255,255,255,.22)}
+.plan[aria-checked=true]{border-color:var(--gold);background:linear-gradient(180deg,var(--gold-dim),rgba(201,166,107,.03))}
+.plan .eyebrow{color:var(--gold2)}.plan strong{font-size:26px;font-weight:500;letter-spacing:-.02em}.plan strong small{font-size:13px;color:var(--tx3);font-weight:400;margin-left:5px}
+.recap{border:1px solid var(--line);border-radius:12px;background:var(--bg2);margin:6px 0 20px}
+.recap div{display:flex;justify-content:space-between;padding:12px 15px;border-bottom:1px solid var(--line);font-size:14px}.recap div:last-child{border:0}.recap span{color:var(--tx3)}
+.tl{list-style:none;margin:8px 0 22px}
+.tl li{display:flex;gap:14px;align-items:center;padding:11px 0;color:var(--tx3);font-size:14.5px;transition:color .3s}
+.tl li .d{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line2);display:grid;place-items:center;flex:none;transition:all .3s}
+.tl li.cur{color:var(--tx)}.tl li.cur .d{border-color:var(--gold);border-top-color:transparent;animation:spin .9s linear infinite}
+.tl li.ok{color:var(--tx2)}.tl li.ok .d{background:var(--ok);border-color:var(--ok);color:#0a1a10;animation:none}
+.tl li.ok .d svg{width:13px;height:13px;stroke-width:2.6}
+.tl li .d svg{display:none}.tl li.ok .d svg{display:block}
+.note{padding:13px 15px;border-radius:11px;background:var(--gold-dim);border:1px solid var(--gold-line);color:var(--tx);font-size:13.5px;margin-bottom:18px}
+.note b{font-family:var(--f-mono);font-weight:500}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.kv>*{background:var(--surface);padding:13px 16px;font-size:14px}.kv>span{color:var(--tx3)}
 
-  .plans{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px}
-  @media(max-width:520px){.plans{grid-template-columns:1fr}}
-  .plan{border:1px solid var(--border);border-radius:var(--radius-sm);padding:16px 14px;cursor:pointer;
-    background:var(--bg-2);transition:all .22s var(--ease)}
-  .plan:hover{border-color:var(--border-hover);transform:translateY(-2px)}
-  .plan.sel{border-color:var(--accent);background:linear-gradient(160deg,#ff6a1a1c,#ff6a1a05);
-    box-shadow:0 8px 20px -6px #ff6a1a40}
-  .plan .p-name{font-family:'Sora',sans-serif;font-weight:700;font-size:14.5px;color:var(--text);margin-bottom:6px}
-  .plan .p-price{font-family:'Sora',sans-serif;font-size:24px;font-weight:800;color:var(--accent-2);letter-spacing:-.01em}
-  .plan .p-price small{font-size:11.5px;color:var(--text-3);margin-left:4px;font-family:'Inter',sans-serif;font-weight:600}
+/* ---------- toast ---------- */
+#toasts{position:fixed;z-index:60;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;width:min(92vw,420px);pointer-events:none}
+.toast{background:var(--surface3);border:1px solid var(--line2);padding:12px 15px;border-radius:11px;font-size:13.5px;box-shadow:0 14px 34px -12px rgba(0,0,0,.8);animation:enter .3s var(--ease) both}
+.toast.err{border-color:rgba(217,115,107,.5)}
 
-  .pay-info{background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);
-    padding:14px 16px;margin-bottom:18px;font-size:13px}
-  .pay-info .row{display:flex;justify-content:space-between;gap:10px;padding:7px 0;
-    border-bottom:1px solid var(--border)}
-  .pay-info .row:last-child{border-bottom:none}
-  .pay-info b{color:var(--accent-2);font-weight:700}
-
-  label{display:block;font-size:12px;font-weight:600;color:var(--text-2);margin:14px 0 6px}
-  input,textarea,select{
-    width:100%;background:var(--bg-2);border:1px solid var(--border);color:var(--text);
-    border-radius:var(--radius-sm);font-family:inherit;font-size:14px;padding:12px 14px;
-    transition:all .2s var(--ease);
-  }
-  textarea{min-height:110px;resize:vertical}
-  input:focus,textarea:focus,select:focus{
-    outline:none;border-color:var(--accent);background:var(--card);
-    box-shadow:0 0 0 4px var(--accent-dim);
-  }
-  ::placeholder{color:var(--text-3)}
-
-  #verifyCode{text-align:center;font-size:26px;letter-spacing:.5em;font-weight:700;color:var(--accent-2);
-    padding-left:8px}
-
-  .btn{
-    border:none;border-radius:var(--radius-sm);font-family:inherit;font-weight:700;font-size:13.5px;
-    padding:14px 20px;cursor:pointer;transition:all .22s var(--ease);position:relative;overflow:hidden;
-  }
-  .btn-gold{background:linear-gradient(135deg,var(--accent),#ff8c42);color:#fff;
-    box-shadow:0 10px 26px -8px #ff6a1a80}
-  .btn-gold:hover{transform:translateY(-2px);box-shadow:0 14px 32px -8px #ff6a1aa6}
-  .btn-gold:active{transform:translateY(0)}
-  .btn-gold:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
-  .btn-block{display:block;width:100%}
-  .btn-ghost{background:var(--bg-2);border:1px solid var(--border);color:var(--text-2)}
-  .btn-ghost:hover{color:var(--text);border-color:var(--border-hover);background:var(--card-hover)}
-  .btn-ghost:disabled{opacity:.55;cursor:not-allowed}
-
-  .hint{font-size:11.5px;color:var(--text-3);margin-top:8px;line-height:1.55}
-  .err{color:var(--danger);font-size:12.5px;margin-top:10px;min-height:16px;font-weight:500}
-  .ok{color:var(--success);font-size:12.5px;margin-top:10px;min-height:16px;font-weight:500}
-
-  .user-chip{display:flex;align-items:center;justify-content:space-between;gap:10px;
-    background:var(--bg-2);border:1px solid var(--border);border-radius:var(--radius-sm);
-    padding:10px 14px;margin-bottom:20px;font-size:12.5px;color:var(--text-2)}
-  .user-chip b{color:var(--accent-2);word-break:break-all;font-weight:600}
-  .user-chip button{background:transparent;border:1px solid var(--border);color:var(--text-2);
-    cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;border-radius:8px;padding:6px 10px;
-    transition:all .2s var(--ease)}
-  .user-chip button:hover{color:var(--danger);border-color:var(--danger)}
-
-  /* ===== SITE ===== */
-  #site{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:48px 22px 100px;
-    animation:fadeIn .4s var(--ease) both}
-  header.top{display:flex;align-items:center;justify-content:space-between;
-    border-bottom:1px solid var(--border);padding-bottom:22px;margin-bottom:36px;flex-wrap:wrap;gap:14px}
-  .brand{display:flex;align-items:center;gap:14px}
-  .brand .crest{width:40px;height:40px;border-radius:12px;
-    background:linear-gradient(150deg,var(--accent-2),var(--accent));
-    display:flex;align-items:center;justify-content:center;font-family:'Sora',sans-serif;
-    font-weight:800;font-size:17px;color:#0a0a0c}
-  .brand h1{font-family:'Sora',sans-serif;font-size:18px;font-weight:800;color:var(--text)}
-  .brand h1 em{font-style:normal;color:var(--accent);font-size:12px;font-weight:700;
-    letter-spacing:.1em;text-transform:uppercase;display:block;margin-top:2px}
-  .case-id{font-size:11.5px;color:var(--text-3);font-weight:600}
-  .session-badge{font-size:11.5px;color:var(--accent-2);font-weight:600;border:1px solid var(--border);
-    border-radius:999px;padding:6px 12px;background:var(--card)}
-  .logout-btn{background:transparent;border:1px solid var(--border);color:var(--text-2);cursor:pointer;
-    font-family:inherit;font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 12px;
-    transition:all .2s var(--ease)}
-  .logout-btn:hover{color:var(--danger);border-color:var(--danger)}
-
-  .lede{margin-bottom:32px;animation:fadeInUp .5s var(--ease) both}
-  .lede h2{font-size:clamp(24px,3.4vw,30px);color:var(--text);line-height:1.25;max-width:640px;margin-bottom:10px}
-  .lede h2 span{color:var(--accent)}
-  .lede p{color:var(--text-2);font-size:14px;line-height:1.7;max-width:580px}
-
-  .notice{border-left:3px solid var(--accent);background:var(--accent-dim);border-radius:0 var(--radius-sm) var(--radius-sm) 0;
-    padding:14px 16px;font-size:13px;color:var(--text-2);line-height:1.65;margin-bottom:18px;
-    animation:fadeInUp .5s var(--ease) both}
-  .notice strong{color:var(--accent-2)}
-  .notice.warn{border-left-color:var(--danger);background:var(--danger-dim)}
-  .notice.warn strong{color:#f87171}
-
-  fieldset{border:none;padding:0;margin:0 0 30px}
-  .field-block{margin-bottom:20px}
-  .required::after{content:" *";color:var(--danger)}
-
-  .severity-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
-  .sev-opt{position:relative}
-  .sev-opt input{position:absolute;opacity:0}
-  .sev-opt label{display:block;margin:0;padding:13px 12px;border:1px solid var(--border);cursor:pointer;
-    border-radius:var(--radius-sm);font-size:12.5px;font-weight:600;color:var(--text-2);text-align:center;
-    transition:all .2s var(--ease);background:var(--bg-2)}
-  .sev-opt label:hover{border-color:var(--border-hover);color:var(--text)}
-  .sev-opt input:checked+label{border-color:var(--accent);color:#fff;
-    background:linear-gradient(135deg,var(--accent),#ff8c42);box-shadow:0 6px 16px -4px #ff6a1a66}
-
-  .dest-list{display:flex;flex-direction:column;gap:8px}
-  .dest-item{display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:var(--radius-sm);
-    padding:12px 14px;font-size:13px;background:var(--bg-2);transition:all .2s var(--ease);cursor:pointer}
-  .dest-item:hover{border-color:var(--border-hover);background:var(--card-hover)}
-  .dest-item input{width:16px;height:16px;accent-color:var(--accent)}
-  .dest-item .addr{color:var(--text)}
-  .dest-item .note{color:var(--text-3);margin-left:auto;font-size:11.5px;text-align:right}
-
-  .actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:16px}
-  .status-line{font-size:12.5px;color:var(--text-2)}
-
-  footer.foot{margin-top:56px;border-top:1px solid var(--border);padding-top:22px;font-size:11.5px;
-    color:var(--text-3);line-height:1.8}
-
-  @media(max-width:560px){
-    .panel{padding:26px 20px}
-    header.top{flex-direction:column;align-items:flex-start}
-  }
+/* ---------- mobile ---------- */
+.bar{display:none}
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr}.viz{order:-1;max-width:300px;margin:0 auto}
+  .steps3{grid-template-columns:1fr}
+  .stats{grid-template-columns:1fr 1fr}
+}
+@media (max-width:860px){
+  .shell{grid-template-columns:1fr}.side{display:none}
+  .top{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;background:rgba(10,10,11,.85);backdrop-filter:blur(12px);padding-top:calc(14px + env(safe-area-inset-top))}
+  .main{padding-bottom:110px}
+  .bar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(12,12,14,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+  .bar button{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;color:var(--tx3);font-size:10.5px;border-radius:10px;min-height:52px}
+  .bar button[aria-current=page]{color:var(--gold2)}
+  .bar button svg{width:21px;height:21px}
+  .nav-btns .btn{flex:1}
+  thead{display:none}
+  table,tbody,tr,td{display:block;width:100%}
+  tr{padding:12px 4px;border-bottom:1px solid var(--line)}tr:last-child{border:0}
+  td{border:0;padding:5px 14px;display:flex;justify-content:space-between;gap:16px;text-align:right}
+  td::before{content:attr(data-l);color:var(--tx3);font:500 10.5px var(--f-mono);letter-spacing:.12em;text-transform:uppercase;text-align:left;flex:none;padding-top:2px}
+  td.tg{max-width:none}
+}
+@media (max-width:560px){
+  .plans,.opts.two{grid-template-columns:1fr}
+  .stats{grid-template-columns:1fr 1fr;gap:10px}.stat{padding:15px}.stat strong{font-size:20px}
+  .prog div{font-size:0;padding-top:8px}.prog div.cur{font-size:10px}
+  .prog{grid-template-columns:repeat(5,1fr)}
+  .sum div{grid-template-columns:1fr;gap:4px}
+  .kv{grid-template-columns:1fr}.kv>span{padding-bottom:0}.kv>b{padding-top:2px}
+  .otp{gap:7px}.otp input{height:52px;font-size:20px}
+  .panel{padding:26px 20px}
+  .hero-card .btn{width:100%}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+  .viz .ln{animation:none;stroke-dashoffset:0}
+}
 </style>
 </head>
 <body>
-<div class="grain"></div>
 
-<!-- ============ INTRO ============ -->
-<div id="intro">
-  <div class="intro-crest">T</div>
-  <div class="intro-title">TAKAMURA <em>ELITE</em></div>
-  <div class="intro-sub">Outil de signalement des comptes WhatsApp abusifs — accès sécurisé.</div>
-  <div class="tap-hint">Toucher pour entrer</div>
-</div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-overview" viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 11h7v9h-7zM4 14h7v6H4z"/></symbol>
+    <symbol id="i-report" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 12v5M9.5 14.5h5"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 4H5v16h4M16 8l4 4-4 4M20 12H9"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A9.6 9.6 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.3 4.2M6.6 6.7C3.7 8.6 2 12 2 12s3.6 7 10 7c1.7 0 3.2-.4 4.4-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 24 24"><path d="M12 2.5 20 7v10l-8 4.5L4 17V7z"/><path d="M8.5 9.5h7M12 9.5v7"/></symbol>
+  </defs>
+</svg>
 
-<!-- ============ AUTH ============ -->
-<div id="auth" hidden>
-  <div class="pay-wrap">
-    <div class="panel">
-      <div class="brand-lg">
-        <div class="crest">T</div>
-        <div class="t">TAKAMURA<em>Elite</em></div>
-      </div>
+<div id="toasts" role="status" aria-live="polite"></div>
 
-      <div class="tabs">
-        <div class="tab active" data-tab="login">Connexion</div>
-        <div class="tab" data-tab="register">Inscription</div>
-      </div>
-
-      <!-- LOGIN -->
-      <div id="tabLogin">
-        <h2>Connexion</h2>
-        <div class="sub">Entrez votre email et mot de passe.</div>
-        <label for="loginEmail">Email</label>
-        <input id="loginEmail" type="email" placeholder="vous@exemple.com" autocomplete="email">
-        <label for="loginPassword">Mot de passe</label>
-        <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password">
-        <button class="btn btn-gold btn-block" id="loginBtn" style="margin-top:18px;">Se connecter</button>
-        <div class="err" id="loginErr"></div>
-      </div>
-
-      <!-- REGISTER -->
-      <div id="tabRegister" hidden>
-        <h2>Inscription</h2>
-        <div class="sub">Créez un compte. Un code à 6 chiffres vous sera envoyé par email pour vérifier votre adresse.</div>
-        <label for="regEmail">Email</label>
-        <input id="regEmail" type="email" placeholder="vous@exemple.com" autocomplete="email">
-        <label for="regPassword">Mot de passe (8 caractères min.)</label>
-        <input id="regPassword" type="password" placeholder="••••••••" autocomplete="new-password">
-        <label for="regPassword2">Confirmer le mot de passe</label>
-        <input id="regPassword2" type="password" placeholder="••••••••" autocomplete="new-password">
-        <button class="btn btn-gold btn-block" id="registerBtn" style="margin-top:18px;">Créer mon compte</button>
-        <div class="err" id="registerErr"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ============ VERIFY (saisie du code) ============ -->
-<div id="verify" hidden>
-  <div class="pay-wrap">
-    <div class="panel">
-      <div class="brand-lg">
-        <div class="crest">T</div>
-        <div class="t">TAKAMURA<em>Elite</em></div>
-      </div>
-
-      <h2>Vérification de l'email</h2>
-      <div class="sub">
-        Un code à 6 chiffres a été envoyé à <b id="verifyEmail" style="color:var(--accent-2)">—</b>.
-        Il est valable <b id="verifyTtl">15</b> minutes.
-      </div>
-
-      <label for="verifyCode">Code de vérification</label>
-      <input id="verifyCode" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="one-time-code">
-
-      <button class="btn btn-gold btn-block" id="verifyBtn" style="margin-top:18px;">Vérifier</button>
-      <div class="err" id="verifyErr"></div>
-      <div class="ok" id="verifyOk"></div>
-
-      <div style="display:flex;gap:10px;margin-top:14px">
-        <button class="btn btn-ghost" id="resendBtn" style="flex:1">Renvoyer le code</button>
-        <button class="btn btn-ghost" id="backAuthBtn" style="flex:1">Retour</button>
-      </div>
-
-      <div class="hint" style="margin-top:16px">
-        Pas reçu ? Vérifiez le dossier spam ou attendez quelques instants avant de demander un renvoi.
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ============ PAYWALL ============ -->
-<div id="paywall" hidden>
-  <div class="pay-wrap">
-    <div class="panel">
-      <div class="brand-lg">
-        <div class="crest">T</div>
-        <div class="t">TAKAMURA<em>Elite</em></div>
-      </div>
-
-      <div class="user-chip">
-        <span>Connecté : <b id="payUserEmail">—</b></span>
-        <button id="payLogoutBtn" type="button">Déconnexion</button>
-      </div>
-
-      <h2>Choisissez votre accès</h2>
-      <div class="sub">Le paiement se fait par Mobile Money. L'accès est activé immédiatement après validation.</div>
-
-      <div class="plans" id="plans"></div>
-      <div class="pay-info" id="payInfo"></div>
-
-      <div id="gatewayButtons" style="display:flex;flex-direction:column;gap:8px;margin:6px 0 18px"></div>
-      <div class="sub" id="manualPayLabel">Ou déclarez un paiement manuel (Orange Money / MTN MoMo) ci-dessous :</div>
-
-      <label for="pName">Votre nom</label>
-      <input id="pName" type="text" placeholder="Nom / pseudo" autocomplete="off">
-
-      <label for="pPhone">Votre numéro (celui qui a payé)</label>
-      <input id="pPhone" type="text" placeholder="+237..." autocomplete="off">
-
-      <label for="pRef">Référence de transaction (optionnel)</label>
-      <input id="pRef" type="text" placeholder="ex: MP2409.1234.A56789" autocomplete="off">
-
-      <button class="btn btn-gold btn-block" id="payBtn" style="margin-top:18px;">J'ai payé — Activer mon accès</button>
-      <div class="err" id="payErr"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ============ SITE ============ -->
-<div id="site" hidden>
-  <header class="top">
-    <div class="brand">
-      <div class="crest">T</div>
-      <h1>TAKAMURA <em>ELITE</em></h1>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <div class="session-badge" id="sessionBadge">Session —</div>
-      <div class="case-id" id="caseId">DOSSIER N° —</div>
-      <button class="logout-btn" id="siteLogoutBtn" type="button">Déconnexion</button>
-    </div>
+<!-- ============================ LANDING ============================ -->
+<div id="v-landing" class="view">
+  <header class="nav">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
+    <button class="btn ghost sm" data-go="auth-login">Sign in</button>
   </header>
-
-  <div class="lede">
-    <h2>Signaler un <span>compte WhatsApp</span></h2>
-    <p>Le formulaire prépare et envoie un e-mail complet aux adresses de support WhatsApp ci-dessous.</p>
-  </div>
-
-  <div class="notice warn">
-    <strong>Cas de pédocriminalité :</strong> en plus du signalement à WhatsApp, contactez immédiatement les autorités compétentes de votre pays (police, gendarmerie, NCMEC CyberTipline / INHOPE). Le support WhatsApp peut mettre du temps à traiter les e-mails ; les autorités doivent être alertées sans délai.
-  </div>
-
-  <div class="notice">
-    <strong>Conseil :</strong> en complément de cet e-mail, signalez aussi le compte directement depuis l'application WhatsApp (ouvrir la conversation → nom du contact → Signaler). C'est le canal que WhatsApp traite le plus rapidement en interne.
-  </div>
-
-  <form id="reportForm">
-    <fieldset>
-      <div class="field-block">
-        <label class="required" for="category">Nature du signalement</label>
-        <select id="category" required>
-          <option value="">— Choisir une catégorie —</option>
-          <option value="Fraude / Arnaque">Fraude / Arnaque</option>
-          <option value="Pédocriminalité / Exploitation d'enfants">Pédocriminalité / Exploitation d'enfants</option>
-          <option value="Spam">Spam</option>
-          <option value="Vente illégale">Vente illégale</option>
-          <option value="Autre">Autre</option>
-        </select>
-      </div>
-
-      <div class="field-block">
-        <label>Gravité</label>
-        <div class="severity-grid">
-          <div class="sev-opt"><input type="radio" name="sev" id="sevLow" value="Faible"><label for="sevLow">Faible</label></div>
-          <div class="sev-opt"><input type="radio" name="sev" id="sevMed" value="Modérée" checked><label for="sevMed">Modérée</label></div>
-          <div class="sev-opt"><input type="radio" name="sev" id="sevHigh" value="Élevée"><label for="sevHigh">Élevée</label></div>
-          <div class="sev-opt"><input type="radio" name="sev" id="sevCrit" value="Critique — mineurs impliqués"><label for="sevCrit">Critique</label></div>
+  <main>
+    <section class="hero">
+      <div>
+        <span class="badge"><i></i>SECURE REPORTING PLATFORM</span>
+        <h1>Report abuse.<br><em>Protect people.</em></h1>
+        <p class="lead">A structured, verified channel to report WhatsApp accounts involved in fraud, exploitation or illegal activity — delivered to the platform’s official support teams with a traceable case number.</p>
+        <div class="cta">
+          <button class="btn primary" data-go="auth-login">Access the platform <svg class="i"><use href="#i-arrow"/></svg></button>
+          <button class="btn" id="howBtn">How it works</button>
+        </div>
+        <div class="trust">
+          <span><svg class="i"><use href="#i-lock"/></svg>Secure access</span>
+          <span><svg class="i"><use href="#i-mail"/></svg>Email verification</span>
+          <span><svg class="i"><use href="#i-shield"/></svg>Protected reports</span>
         </div>
       </div>
-    </fieldset>
-
-    <fieldset>
-      <div class="field-block">
-        <label class="required" for="waNumber">Numéro ou lien WhatsApp du compte signalé</label>
-        <input type="text" id="waNumber" placeholder="+237... ou https://wa.me/..." required>
+      <div class="viz" aria-hidden="true">
+        <svg viewBox="-220 -220 440 440">
+          <circle class="ring" r="60"/><circle class="ring g" r="110"/><circle class="ring" r="160"/>
+          <g stroke-linecap="round">
+            <line class="ln" x1="0" y1="-30" x2="0" y2="-160" style="--len:140"/>
+            <line class="ln" x1="30" y1="0" x2="160" y2="0" style="--len:140"/>
+            <line class="ln" x1="0" y1="30" x2="0" y2="160" style="--len:140"/>
+            <line class="ln" x1="-30" y1="0" x2="-160" y2="0" style="--len:140"/>
+          </g>
+          <circle class="core" r="30"/>
+          <g fill="none" stroke="#c9a66b" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" transform="translate(-14 -14) scale(1.17)"><path d="M12 2.5 20 7v10l-8 4.5L4 17V7z"/><path d="M8.5 9.5h7M12 9.5v7"/></g>
+          <circle class="nd" cx="0" cy="-160" r="5"/><circle class="nd" cx="160" cy="0" r="5"/><circle class="nd" cx="0" cy="160" r="5"/><circle class="nd" cx="-160" cy="0" r="5"/>
+          <text x="0" y="-178" text-anchor="middle">Security</text>
+          <text x="176" y="4" text-anchor="start" transform="rotate(0)">Trust</text>
+          <text x="0" y="184" text-anchor="middle">Reporting</text>
+          <text x="-176" y="4" text-anchor="end">Protection</text>
+        </svg>
       </div>
-
-      <div class="field-block">
-        <label for="msgContent">Message reçu / envoyé par le compte (texte exact)</label>
-        <textarea id="msgContent" placeholder="Collez ici le message exact que vous avez reçu."></textarea>
-        <div class="hint">Rien n'est pré-rempli automatiquement — copiez-collez vous-même.</div>
+    </section>
+    <section class="how" id="how">
+      <span class="eyebrow">Process</span>
+      <h2>Three steps, one traceable case.</h2>
+      <div class="steps3">
+        <div class="card"><b>01</b><h3>Create &amp; verify</h3><p>Register with your email and confirm it with a 6-digit code.</p></div>
+        <div class="card"><b>02</b><h3>Activate access</h3><p>Choose 24 hours or 1 week and pay with Orange Money or MTN MoMo. Access activates automatically once the payment is confirmed.</p></div>
+        <div class="card"><b>03</b><h3>Submit a report</h3><p>Describe the account and evidence in a guided form. You receive a case ID and keep a history.</p></div>
       </div>
-    </fieldset>
-
-    <fieldset>
-      <div class="field-block">
-        <label class="required">Adresses de destination</label>
-        <div class="dest-list" id="destList"></div>
-      </div>
-    </fieldset>
-
-    <div class="actions">
-      <button type="submit" class="btn btn-gold" id="submitBtn">Envoyer le signalement</button>
-      <span class="status-line" id="statusLine"></span>
-    </div>
-  </form>
-
-  <footer class="foot">
-    Takamura Elite — outil de signalement. Les signalements sont envoyés vers les adresses de support WhatsApp.<br>
-    Pour les faits impliquant des mineurs, signalez aussi aux autorités de votre pays sans attendre.
-  </footer>
+    </section>
+  </main>
+  <footer class="foot">Reports are forwarded to the platform’s official support channels. If a minor is at risk, also contact your local authorities without delay. Takamura Elite is an independent service.</footer>
 </div>
 
-<script>
-/* =========================================================
-   ÉTAT
-   ========================================================= */
-const TOKEN_KEY = 'takamura_token';
-const RESEND_COOLDOWN_S = 60;
-const POLL_MS = 15000;
+<!-- ============================== AUTH ============================== -->
+<div id="v-auth" class="view center" hidden>
+  <div class="auth-wrap">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
 
+    <form class="panel" id="f-login" novalidate>
+      <h2 tabindex="-1">Welcome back</h2>
+      <p class="sub">Sign in to your secure workspace.</p>
+      <div id="loginBanner" class="banner" role="alert" hidden></div>
+      <div class="field"><label for="loginEmail">Email</label><div class="inp"><input id="loginEmail" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" aria-describedby="loginEmail-err"></div><div class="ferr" id="loginEmail-err" role="alert"></div></div>
+      <div class="field"><label for="loginPassword">Password</label><div class="inp pw"><input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" aria-describedby="loginPassword-err"><button type="button" class="eye" data-eye="loginPassword" aria-label="Show password"><svg class="i"><use href="#i-eye"/></svg></button></div><div class="ferr" id="loginPassword-err" role="alert"></div></div>
+      <button class="btn primary block" type="submit" id="loginBtn"><span class="sp-label">Sign in</span></button>
+      <p class="alt">New here? <button type="button" data-go="auth-register">Create an account</button></p>
+      <p class="alt"><button type="button" data-go="landing" style="color:var(--tx3)">← Back to home</button></p>
+    </form>
+
+    <form class="panel" id="f-register" novalidate hidden>
+      <h2 tabindex="-1">Create your account</h2>
+      <p class="sub">We’ll send a 6-digit code to verify your email.</p>
+      <div id="regBanner" class="banner" role="alert" hidden></div>
+      <div class="field"><label for="regEmail">Email</label><div class="inp"><input id="regEmail" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" aria-describedby="regEmail-err"></div><div class="ferr" id="regEmail-err" role="alert"></div></div>
+      <div class="field"><label for="regPassword">Password</label><div class="inp pw"><input id="regPassword" type="password" autocomplete="new-password" placeholder="8 characters minimum" aria-describedby="regPassword-err"><button type="button" class="eye" data-eye="regPassword" aria-label="Show password"><svg class="i"><use href="#i-eye"/></svg></button></div><div class="ferr" id="regPassword-err" role="alert"></div></div>
+      <div class="field"><label for="regPassword2">Confirm password</label><div class="inp pw"><input id="regPassword2" type="password" autocomplete="new-password" placeholder="Repeat your password" aria-describedby="regPassword2-err"><button type="button" class="eye" data-eye="regPassword2" aria-label="Show password"><svg class="i"><use href="#i-eye"/></svg></button></div><div class="ferr" id="regPassword2-err" role="alert"></div></div>
+      <button class="btn primary block" type="submit" id="regBtn"><span class="sp-label">Create my account</span></button>
+      <p class="alt">Already registered? <button type="button" data-go="auth-login">Sign in</button></p>
+    </form>
+  </div>
+</div>
+
+<!-- ============================= VERIFY ============================= -->
+<div id="v-verify" class="view center" hidden>
+  <div class="auth-wrap">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
+    <div class="panel">
+      <h2 tabindex="-1">Verify your email</h2>
+      <p class="sub">Enter the 6-digit code we sent to</p>
+      <p style="margin:-10px 0 22px"><span class="mailpill"><svg class="i"><use href="#i-mail"/></svg><span id="verifyEmail"></span></span></p>
+      <div id="verifyBanner" class="banner ok" role="status" hidden></div>
+      <div class="otp" id="otp" role="group" aria-label="6-digit verification code"></div>
+      <div class="ferr" id="verifyErr" role="alert" style="margin-bottom:14px"></div>
+      <button class="btn primary block" id="verifyBtn"><span class="sp-label">Verify email</span></button>
+      <p class="alt"><button type="button" id="resendBtn" disabled>Resend code</button></p>
+      <p class="alt"><button type="button" data-go="auth-login" style="color:var(--tx3)">← Back to sign in</button></p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ CHECKOUT ============================ -->
+<div id="v-checkout" class="view center" hidden>
+  <div class="co">
+    <div class="brand" style="justify-content:center;margin-bottom:22px"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
+    <div class="stepper" id="coStepper" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="panel" id="coBody"></div>
+    <p class="alt" style="margin-top:18px"><span id="coWho" style="color:var(--tx3)"></span> · <button type="button" id="coLogout">Sign out</button></p>
+  </div>
+</div>
+
+<!-- ============================== APP ============================== -->
+<div id="v-app" class="shell view" hidden>
+  <aside class="side" aria-label="Sidebar">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
+    <nav class="nav-l" id="sideNav" aria-label="Main"></nav>
+    <div class="side-foot">
+      <div class="subcard"><div class="row"><small>SUBSCRIPTION</small><span class="pill ok" id="sideBadge">ACTIVE</span></div><div class="t" id="sideLeft"></div></div>
+      <div class="who" id="sideEmail"></div>
+      <button class="btn sm block" id="sideLogout"><svg class="i"><use href="#i-logout"/></svg>Sign out</button>
+    </div>
+  </aside>
+  <div style="min-width:0">
+    <div class="top"><div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA</b></div><span class="pill ok">ACTIVE</span></div>
+    <main class="main" id="main"></main>
+  </div>
+  <nav class="bar" id="bar" aria-label="Main"></nav>
+</div>
+
+<script nonce="{{NONCE}}">
+'use strict';
+/* =============================== HELPERS =============================== */
 const $ = (id) => document.getElementById(id);
-
+const TOKEN_KEY = 'takamura_token';
 const store = {
-  get()  { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } },
-  set(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch { /* stockage indisponible */ } },
-  clear(){ try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } },
+  get() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } },
+  set(v) { try { localStorage.setItem(TOKEN_KEY, v); } catch {} },
+  clear() { try { localStorage.removeItem(TOKEN_KEY); } catch {} },
 };
-
-const state = {
-  config: null,
-  plan: 'day',
-  token: store.get(),
-  verifyEmail: '',
-  caseId: '',
-  timers: { poll: null, badge: null, resend: null },
+const S = {
+  cfg: null, token: store.get(), me: null, verifyEmail: '', section: 'overview',
+  plan: 'day', method: '', phone: '', pay: { id: '', timer: null, view: 'plan' },
+  rep: null, resendT: null,
 };
-
-const DEST_NOTES = {
-  'support@support.whatsapp.com': 'Support général',
-  'support@whatsapp.com': 'Support',
-  'android@support.whatsapp.com': 'Android',
-  'smb@support.whatsapp.com': 'WhatsApp Business',
-  'accessibility@support.whatsapp.com': 'Accessibilité',
-};
-
-/* =========================================================
-   OUTILS
-   ========================================================= */
-function el(tag, props = {}, ...kids) {
+const SVG = (name, cls) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'i' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true'); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', '#i-' + name); s.append(u); return s; };
+function h(tag, props, ...kids) {
   const n = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
     if (k === 'class') n.className = v;
     else if (k === 'text') n.textContent = v;
-    else if (k === 'dataset') Object.assign(n.dataset, v);
-    else n.setAttribute(k, v);
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else if (k === 'data') Object.assign(n.dataset, v);
+    else n.setAttribute(k, v === true ? '' : v);
   }
-  for (const c of kids) n.append(c);
+  for (const c of kids.flat()) if (c != null && c !== false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
   return n;
 }
-
+const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
+const fmtMoney = (n) => Number(n).toLocaleString('en-US');
+const fmtDate = (ms) => new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+const fmtDay = (ms) => new Date(ms).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+function fmtLeft(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000)), d = Math.floor(s / 86400), hh = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${hh}h` : hh > 0 ? `${hh}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+}
+function toast(msg, err) {
+  const t = h('div', { class: 'toast' + (err ? ' err' : ''), text: msg });
+  $('toasts').append(t);
+  setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => t.remove(), 320); }, 3800);
+}
 async function api(path, { method = 'GET', body } = {}) {
   const headers = {};
   if (body) headers['Content-Type'] = 'application/json';
-  if (state.token) headers['X-User-Token'] = state.token;
+  if (S.token) headers['X-User-Token'] = S.token;
   let res;
-  try {
-    res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  } catch {
-    const err = new Error('Connexion au serveur impossible.');
-    err.status = 0;
-    throw err;
-  }
+  try { res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined }); }
+  catch { const e = new Error('Cannot reach the server. Check your connection.'); e.status = 0; throw e; }
   let data = null;
-  try { data = await res.json(); } catch { /* corps vide */ }
-  if (!res.ok) {
-    const err = new Error((data && data.error) || 'Erreur serveur.');
-    err.status = res.status;
-    err.data = data;
-    throw err;
-  }
+  try { data = await res.json(); } catch {}
+  if (!res.ok) { const e = new Error((data && data.error) || 'Something went wrong. Please try again.'); e.status = res.status; e.data = data; throw e; }
   return data;
 }
-
-async function ensureConfig() {
-  if (!state.config) state.config = await api('/api/config');
-  return state.config;
+function setLoading(btn, on) { btn.classList.toggle('loading', on); btn.disabled = on; btn.setAttribute('aria-busy', on ? 'true' : 'false'); }
+function fieldErr(id, msg) {
+  const inp = $(id), err = $(id + '-err');
+  if (err) err.textContent = msg || '';
+  if (inp) { if (msg) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid'); }
 }
-
-function show(name) {
-  for (const v of ['auth', 'verify', 'paywall', 'site']) $(v).hidden = (v !== name);
-  if (name !== 'paywall') stopPoll();
-  if (name !== 'site') stopBadge();
+function banner(id, msg) { const b = $(id); b.textContent = msg || ''; b.hidden = !msg; }
+const VIEWS = ['landing', 'auth', 'verify', 'checkout', 'app'];
+function showView(name) {
+  for (const v of VIEWS) { const n = $('v-' + v); n.hidden = v !== name; }
+  const n = $('v-' + name);
+  n.style.animation = 'none'; void n.offsetHeight; n.style.animation = '';
   window.scrollTo(0, 0);
+  if (name !== 'checkout') stopPoll();
+  const hd = n.querySelector('h2[tabindex]'); if (hd) hd.focus({ preventScroll: true });
 }
+async function ensureCfg() { if (!S.cfg) S.cfg = await api('/api/config'); return S.cfg; }
+function forget() { S.token = ''; store.clear(); S.me = null; }
+const planOf = (k) => (S.cfg.plans.find((p) => p.key === k) || { label: k, price: 0, currency: 'FCFA' });
+const methodOf = (k) => (S.cfg.methods.find((m) => m.key === k) || { label: k });
 
-function stopPoll()  { clearInterval(state.timers.poll);  state.timers.poll = null; }
-function stopBadge() { clearInterval(state.timers.badge); state.timers.badge = null; }
-
-function forgetToken() { state.token = ''; store.clear(); }
-
-async function withBusy(btn, fn) {
-  if (btn.disabled) return;
-  btn.disabled = true;
-  try { await fn(); } finally { btn.disabled = false; }
-}
-
-function setMsg(node, text, kind) {
-  node.textContent = text || '';
-  if (kind) node.className = kind;
-}
-
-function newCaseId() {
-  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const rnd = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).toUpperCase().padStart(5, '0').slice(0, 5);
-  return `TKM-${ymd}-${rnd}`;
-}
-function refreshCaseId() {
-  state.caseId = newCaseId();
-  $('caseId').textContent = `DOSSIER N° ${state.caseId}`;
-}
-
-/* =========================================================
-   AUTH
-   ========================================================= */
-function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
-  $('tabLogin').hidden = (tab !== 'login');
-  $('tabRegister').hidden = (tab !== 'register');
-  setMsg($('loginErr'), ''); setMsg($('registerErr'), '');
-}
-document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
-
-function openVerify(email) {
-  state.verifyEmail = email;
-  $('verifyEmail').textContent = email;
-  $('verifyTtl').textContent = (state.config && state.config.codeTtlMinutes) || 15;
-  $('verifyCode').value = '';
-  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
-  show('verify');
-  startResendCooldown();
-  $('verifyCode').focus();
-}
-
-function startResendCooldown() {
-  clearInterval(state.timers.resend);
-  const btn = $('resendBtn');
-  let left = RESEND_COOLDOWN_S;
-  btn.disabled = true;
-  btn.textContent = `Renvoyer (${left}s)`;
-  state.timers.resend = setInterval(() => {
-    left -= 1;
-    if (left <= 0) {
-      clearInterval(state.timers.resend);
-      btn.disabled = false;
-      btn.textContent = 'Renvoyer le code';
-    } else {
-      btn.textContent = `Renvoyer (${left}s)`;
-    }
-  }, 1000);
-}
-
-$('loginBtn').addEventListener('click', () => withBusy($('loginBtn'), async () => {
-  setMsg($('loginErr'), '');
-  const email = $('loginEmail').value.trim();
-  const password = $('loginPassword').value;
-  if (!email || !password) return setMsg($('loginErr'), 'Email et mot de passe requis.');
-  try {
-    await ensureConfig();
-    const data = await api('/api/auth/login', { method: 'POST', body: { email, password } });
-    state.token = data.token; store.set(data.token);
-    $('loginPassword').value = '';
-    await route();
-  } catch (e) {
-    if (e.status === 403 && e.data && e.data.needsVerification) return openVerify(e.data.email || email);
-    setMsg($('loginErr'), e.message);
+/* ============================== NAVIGATION ============================== */
+document.addEventListener('click', (e) => {
+  const g = e.target.closest('[data-go]');
+  if (!g) return;
+  const to = g.dataset.go;
+  if (to === 'landing') return showView('landing');
+  if (to === 'auth-login' || to === 'auth-register') {
+    if (S.token && to === 'auth-login') return route();
+    setAuthMode(to === 'auth-login' ? 'login' : 'register'); showView('auth');
+    (to === 'auth-login' ? $('f-login') : $('f-register')).querySelector('h2').focus({ preventScroll: true });
   }
+});
+$('howBtn').addEventListener('click', () => $('how').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion:reduce)').matches ? 'auto' : 'smooth' }));
+function setAuthMode(m) {
+  $('f-login').hidden = m !== 'login'; $('f-register').hidden = m !== 'register';
+  ['loginEmail', 'loginPassword', 'regEmail', 'regPassword', 'regPassword2'].forEach((i) => fieldErr(i, ''));
+  banner('loginBanner', ''); banner('regBanner', '');
+}
+document.querySelectorAll('[data-eye]').forEach((b) => b.addEventListener('click', () => {
+  const inp = $(b.dataset.eye), show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  clear(b).append(SVG(show ? 'eyeoff' : 'eye'));
 }));
 
-$('registerBtn').addEventListener('click', () => withBusy($('registerBtn'), async () => {
-  setMsg($('registerErr'), '');
-  const email = $('regEmail').value.trim();
-  const p1 = $('regPassword').value;
-  const p2 = $('regPassword2').value;
-  if (!email || !p1) return setMsg($('registerErr'), 'Email et mot de passe requis.');
-  if (p1.length < 8) return setMsg($('registerErr'), 'Mot de passe trop court (8 caractères min).');
-  if (p1 !== p2) return setMsg($('registerErr'), 'Les mots de passe ne correspondent pas.');
+/* ================================= AUTH ================================= */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+$('f-login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = $('loginEmail').value.trim().toLowerCase(), password = $('loginPassword').value;
+  fieldErr('loginEmail', ''); fieldErr('loginPassword', ''); banner('loginBanner', '');
+  let bad = false;
+  if (!EMAIL_RE.test(email)) { fieldErr('loginEmail', 'Enter a valid email address.'); bad = true; }
+  if (!password) { fieldErr('loginPassword', 'Enter your password.'); bad = true; }
+  if (bad) return;
+  const btn = $('loginBtn'); setLoading(btn, true);
   try {
-    await ensureConfig();
-    const data = await api('/api/auth/register', { method: 'POST', body: { email, password: p1 } });
+    const d = await api('/api/auth/login', { method: 'POST', body: { email, password } });
+    S.token = d.token; store.set(d.token); $('loginPassword').value = '';
+    await route();
+  } catch (err) {
+    if (err.data && err.data.needsVerification) return startVerify(email, err.message);
+    banner('loginBanner', err.message);
+  } finally { setLoading(btn, false); }
+});
+$('f-register').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = $('regEmail').value.trim().toLowerCase(), p1 = $('regPassword').value, p2 = $('regPassword2').value;
+  ['regEmail', 'regPassword', 'regPassword2'].forEach((i) => fieldErr(i, '')); banner('regBanner', '');
+  let bad = false;
+  if (!EMAIL_RE.test(email)) { fieldErr('regEmail', 'Enter a valid email address.'); bad = true; }
+  if (p1.length < 8) { fieldErr('regPassword', 'Use at least 8 characters.'); bad = true; }
+  if (p2 !== p1) { fieldErr('regPassword2', 'Passwords do not match.'); bad = true; }
+  if (bad) return;
+  const btn = $('regBtn'); setLoading(btn, true);
+  try {
+    await api('/api/auth/register', { method: 'POST', body: { email, password: p1 } });
     $('regPassword').value = ''; $('regPassword2').value = '';
-    if (data.needsVerification) openVerify(data.email || email);
-  } catch (e) {
-    setMsg($('registerErr'), e.message);
-  }
-}));
-
-$('verifyCode').addEventListener('input', (e) => {
-  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+    startVerify(email, '');
+  } catch (err) { banner('regBanner', err.message); }
+  finally { setLoading(btn, false); }
 });
 
-$('verifyBtn').addEventListener('click', () => withBusy($('verifyBtn'), async () => {
-  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
-  const code = $('verifyCode').value.trim();
-  if (code.length !== 6) return setMsg($('verifyErr'), 'Entrez le code à 6 chiffres.');
-  try {
-    const data = await api('/api/auth/verify', { method: 'POST', body: { email: state.verifyEmail, code } });
-    state.token = data.token; store.set(data.token);
-    await route();
-  } catch (e) {
-    setMsg($('verifyErr'), e.message);
+/* --- verification: 6 boxes --- */
+const otpEls = [];
+(function buildOtp() {
+  const box = $('otp');
+  for (let i = 0; i < 6; i++) {
+    const inp = h('input', { type: 'text', inputmode: 'numeric', autocomplete: i === 0 ? 'one-time-code' : 'off', maxlength: '1', 'aria-label': `Digit ${i + 1} of 6`, pattern: '[0-9]*' });
+    inp.addEventListener('input', () => {
+      inp.value = inp.value.replace(/\D/g, '').slice(-1);
+      $('otp').classList.remove('bad'); $('verifyErr').textContent = '';
+      if (inp.value && i < 5) otpEls[i + 1].focus();
+      if (otpCode().length === 6) submitVerify();
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace' && !inp.value && i > 0) { otpEls[i - 1].focus(); otpEls[i - 1].value = ''; }
+      else if (e.key === 'ArrowLeft' && i > 0) otpEls[i - 1].focus();
+      else if (e.key === 'ArrowRight' && i < 5) otpEls[i + 1].focus();
+    });
+    inp.addEventListener('paste', (e) => {
+      const t = (e.clipboardData || window.clipboardData).getData('text').replace(/\D/g, '').slice(0, 6);
+      if (!t) return; e.preventDefault();
+      [...t].forEach((c, k) => { otpEls[k].value = c; });
+      otpEls[Math.min(t.length, 5)].focus();
+      if (t.length === 6) submitVerify();
+    });
+    inp.addEventListener('focus', () => inp.select());
+    otpEls.push(inp); box.append(inp);
   }
-}));
-
+})();
+const otpCode = () => otpEls.map((i) => i.value).join('');
+function startVerify(email, msg) {
+  S.verifyEmail = email; $('verifyEmail').textContent = email;
+  otpEls.forEach((i) => { i.value = ''; }); $('verifyErr').textContent = ''; $('otp').classList.remove('bad');
+  banner('verifyBanner', msg || `Code sent. It is valid for ${S.cfg ? S.cfg.codeTtlMinutes : 15} minutes.`);
+  showView('verify'); otpEls[0].focus(); startResend(60);
+  ensureCfg().then(() => { if (!$('verifyBanner').hidden && !msg) banner('verifyBanner', `Code sent. It is valid for ${S.cfg.codeTtlMinutes} minutes.`); }).catch(() => {});
+}
+function startResend(sec) {
+  clearInterval(S.resendT); const b = $('resendBtn'); b.disabled = true;
+  let left = sec; b.textContent = `Resend code in ${left}s`;
+  S.resendT = setInterval(() => { left--; if (left <= 0) { clearInterval(S.resendT); b.disabled = false; b.textContent = 'Resend code'; } else b.textContent = `Resend code in ${left}s`; }, 1000);
+}
 $('resendBtn').addEventListener('click', async () => {
-  setMsg($('verifyErr'), ''); setMsg($('verifyOk'), '');
-  try {
-    await api('/api/auth/resend', { method: 'POST', body: { email: state.verifyEmail } });
-    setMsg($('verifyOk'), 'Si le compte existe, un nouveau code vient d\'être envoyé.');
-    startResendCooldown();
-  } catch (e) {
-    setMsg($('verifyErr'), e.message);
-  }
+  const b = $('resendBtn'); if (b.disabled) return; b.disabled = true;
+  try { await api('/api/auth/resend', { method: 'POST', body: { email: S.verifyEmail } }); banner('verifyBanner', 'A new code has been sent.'); startResend(60); }
+  catch (err) { $('verifyErr').textContent = err.message; b.disabled = false; }
 });
-
-$('backAuthBtn').addEventListener('click', () => { clearInterval(state.timers.resend); show('auth'); });
+let verifying = false;
+async function submitVerify() {
+  const code = otpCode();
+  if (code.length !== 6) { $('verifyErr').textContent = 'Enter the 6-digit code.'; return; }
+  if (verifying) return; verifying = true;
+  const btn = $('verifyBtn'); setLoading(btn, true);
+  try {
+    const d = await api('/api/auth/verify', { method: 'POST', body: { email: S.verifyEmail, code } });
+    S.token = d.token; store.set(d.token); await route();
+  } catch (err) {
+    $('verifyErr').textContent = err.message; $('otp').classList.add('bad');
+    otpEls.forEach((i) => { i.value = ''; }); otpEls[0].focus();
+  } finally { verifying = false; setLoading(btn, false); }
+}
+$('verifyBtn').addEventListener('click', submitVerify);
 
 async function logout() {
-  try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* on déconnecte quand même */ }
-  forgetToken();
-  state.me = null;
-  show('auth');
-  switchTab('login');
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  forget(); stopPoll(); showView('landing');
 }
-$('payLogoutBtn').addEventListener('click', logout);
-$('siteLogoutBtn').addEventListener('click', logout);
+$('coLogout').addEventListener('click', logout);
+$('sideLogout').addEventListener('click', logout);
 
-// Entrée = valider
-[['loginEmail', 'loginBtn'], ['loginPassword', 'loginBtn'],
- ['regEmail', 'registerBtn'], ['regPassword', 'registerBtn'], ['regPassword2', 'registerBtn'],
- ['verifyCode', 'verifyBtn']].forEach(([input, btn]) => {
-  $(input).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $(btn).click(); } });
-});
-
-/* =========================================================
-   PAYWALL
-   ========================================================= */
-function renderPlans() {
-  const box = $('plans');
-  box.replaceChildren();
-  for (const p of state.config.plans) {
-    const card = el('div',
-      { class: 'plan' + (p.key === state.plan ? ' sel' : ''), role: 'button', tabindex: '0' },
-      el('div', { class: 'p-name', text: p.label }),
-      el('div', { class: 'p-price' }, Number(p.price).toLocaleString('fr-FR'), el('small', { text: p.currency })));
-    card.addEventListener('click', () => { state.plan = p.key; renderPlans(); renderPayInfo(); });
-    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); } });
-    box.append(card);
-  }
-}
-
-function renderPayInfo() {
-  const p = state.config.plans.find((x) => x.key === state.plan) || state.config.plans[0];
-  const pay = state.config.payment || {};
-  const row = (k, v) => el('div', { class: 'row' }, el('span', { text: k }), el('b', { text: v }));
-  const box = $('payInfo');
-  box.replaceChildren(
-    row('Montant à payer', `${Number(p.price).toLocaleString('fr-FR')} ${p.currency}`),
-    row('Orange Money', pay.orange_money || '—'),
-    row('MTN MoMo', pay.mtn_momo || '—'),
-    row('Bénéficiaire', pay.beneficiary || '—'),
-  );
-}
-
-const GATEWAY_LABEL = {
-  stripe: '💳 Payer par carte bancaire',
-  mtn_momo: '📱 Payer avec MTN MoMo',
-  orange_money: '🟠 Payer avec Orange Money',
-  wave: '🔵 Payer avec Wave',
-};
-
-function renderGatewayButtons() {
-  const box = $('gatewayButtons');
-  const gateways = state.config.gateways || [];
-  box.replaceChildren();
-  const manualLabel = $('manualPayLabel');
-  if (!gateways.length) { manualLabel.textContent = 'Déclarez votre paiement Mobile Money ci-dessous :'; return; }
-  manualLabel.textContent = 'Ou déclarez un paiement manuel ci-dessous :';
-  for (const g of gateways) {
-    const btn = el('button', { class: 'btn btn-gold btn-block', type: 'button', text: GATEWAY_LABEL[g] || g });
-    btn.style.marginBottom = '2px';
-    btn.addEventListener('click', () => withBusy(btn, async () => {
-      setMsg($('payErr'), '', 'err');
-      try {
-        const route = g === 'stripe' ? '/api/checkout' : '/api/cinetpay';
-        const body = g === 'stripe' ? { plan: state.plan } : { plan: state.plan, channel: g === 'mtn_momo' ? 'MTN' : g === 'orange_money' ? 'ORANGE_MONEY' : 'WAVE' };
-        const data = await api(route, { method: 'POST', body });
-        if (data.url) window.location.href = data.url;
-      } catch (e) {
-        if (e.status === 401) { forgetToken(); return show('auth'); }
-        setMsg($('payErr'), e.message, 'err');
-      }
-    }));
-    box.appendChild(btn);
-  }
-}
-
-function setPending(pending) {
-  const btn = $('payBtn');
-  if (pending) {
-    btn.disabled = true;
-    btn.textContent = 'Paiement en attente de validation…';
-    setMsg($('payErr'), 'Votre paiement a été enregistré. Votre accès sera activé dès sa validation — cette page se met à jour automatiquement.', 'ok');
-  } else {
-    btn.disabled = false;
-    btn.textContent = 'J\'ai payé — Activer mon accès';
-  }
-}
-
-function startPoll() {
-  stopPoll();
-  state.timers.poll = setInterval(async () => {
-    try {
-      const me = await api('/api/me');
-      if (me.hasAccess || !me.pending) await route();
-    } catch (e) {
-      if (e.status === 401) { forgetToken(); show('auth'); }
-    }
-  }, POLL_MS);
-}
-
-async function enterPaywall(me) {
-  await ensureConfig();
-  $('payUserEmail').textContent = me.user.email;
-  if (!state.config.plans.some((p) => p.key === state.plan)) state.plan = state.config.plans[0].key;
-  renderPlans();
-  renderPayInfo();
-  renderGatewayButtons();
-  setMsg($('payErr'), '', 'err');
-  setPending(!!me.pending);
-  show('paywall');
-  if (me.pending) startPoll();
-}
-
-$('payBtn').addEventListener('click', () => withBusy($('payBtn'), async () => {
-  setMsg($('payErr'), '', 'err');
-  const name = $('pName').value.trim();
-  const phone = $('pPhone').value.trim();
-  const transactionRef = $('pRef').value.trim();
-  if (!name || !phone) return setMsg($('payErr'), 'Nom et téléphone requis.', 'err');
-  try {
-    await api('/api/payment/start', { method: 'POST', body: { plan: state.plan, name, phone, transactionRef } });
-    setPending(true);
-    startPoll();
-    return; // le bouton reste désactivé pendant l'attente
-  } catch (e) {
-    if (e.status === 401) { forgetToken(); return show('auth'); }
-    setMsg($('payErr'), e.message, 'err');
-  }
-}));
-
-/* =========================================================
-   SITE (formulaire de signalement)
-   ========================================================= */
-function renderDest() {
-  const box = $('destList');
-  box.replaceChildren();
-  for (const addr of (state.config.whatsappEmails || [])) {
-    const cb = el('input', { type: 'checkbox', value: addr, checked: 'checked' });
-    box.append(el('label', { class: 'dest-item', style: 'margin:0' },
-      cb,
-      el('span', { class: 'addr', text: addr }),
-      el('span', { class: 'note', text: DEST_NOTES[addr] || '' })));
-  }
-}
-
-function fmtRemaining(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return d > 0 ? `${d}j ${h}h` : (h > 0 ? `${h}h ${String(m).padStart(2, '0')}min` : `${m}min`);
-}
-
-function startBadge(access) {
-  stopBadge();
-  const label = (state.config.plans.find((p) => p.key === access.plan) || {}).label || 'Accès';
-  const tick = () => {
-    const left = access.expiresAt - Date.now();
-    if (left <= 0) { stopBadge(); route(); return; }
-    $('sessionBadge').textContent = `${label} · reste ${fmtRemaining(left)}`;
-  };
-  tick();
-  state.timers.badge = setInterval(tick, 30000);
-}
-
-async function enterSite(me) {
-  await ensureConfig();
-  renderDest();
-  refreshCaseId();
-  setStatus('');
-  show('site');
-  startBadge(me.access);
-}
-
-function setStatus(text, isError) {
-  const s = $('statusLine');
-  s.textContent = text || '';
-  s.style.color = isError ? 'var(--danger)' : 'var(--success)';
-}
-
-$('reportForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const btn = $('submitBtn');
-  if (btn.disabled) return;
-
-  const destinations = [...document.querySelectorAll('#destList input:checked')].map((i) => i.value);
-  if (!destinations.length) return setStatus('Choisissez au moins une adresse de destination.', true);
-  const sev = document.querySelector('input[name="sev"]:checked');
-
-  btn.disabled = true;
-  setStatus('Envoi en cours…');
-  try {
-    const data = await api('/api/report', {
-      method: 'POST',
-      body: {
-        caseId: state.caseId,
-        category: $('category').value,
-        severity: sev ? sev.value : 'Modérée',
-        waNumber: $('waNumber').value.trim(),
-        message: $('msgContent').value,
-        destinations,
-      },
-    });
-    setStatus(`Signalement envoyé : ${data.sent}/${data.total} adresse(s).`, data.sent === 0);
-    if (data.sent > 0) {
-      $('waNumber').value = '';
-      $('msgContent').value = '';
-      $('category').value = '';
-      refreshCaseId();
-    }
-  } catch (err) {
-    if (err.status === 401) { forgetToken(); return show('auth'); }
-    if (err.status === 403) { setStatus(err.message, true); return route(); }
-    setStatus(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-/* =========================================================
-   ROUTAGE / DÉMARRAGE
-   ========================================================= */
+/* =============================== ROUTING =============================== */
 async function route() {
-  if (!state.token) return show('auth');
+  if (!S.token) return showView('landing');
   try {
-    const me = await api('/api/me');
-    if (me.hasAccess) return await enterSite(me);
-    return await enterPaywall(me);
+    await ensureCfg();
+    const me = await api('/api/me'); S.me = me;
+    if (me.hasAccess) return enterApp();
+    return enterCheckout();
   } catch (e) {
-    if (e.status === 401) { forgetToken(); return show('auth'); }
-    show('auth');
-    setMsg($('loginErr'), e.message);
+    if (e.status === 401) { forget(); setAuthMode('login'); showView('auth'); return; }
+    setAuthMode('login'); showView('auth'); banner('loginBanner', e.message);
   }
 }
 
-(function init() {
-  const intro = $('intro');
-  intro.setAttribute('role', 'button');
-  intro.setAttribute('tabindex', '0');
-  let entered = false;
-  const enter = () => { if (entered) return; entered = true; intro.classList.add('hidden'); route(); };
-  intro.addEventListener('click', enter);
-  intro.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') enter(); });
-  ensureConfig().then(() => { $('verifyTtl').textContent = state.config.codeTtlMinutes; }).catch(() => {});
+/* ============================== CHECKOUT ============================== */
+function stopPoll() { clearTimeout(S.pay.timer); S.pay.timer = null; }
+function stepper(n) { [...$('coStepper').children].forEach((i, k) => i.classList.toggle('on', k <= n)); }
+function enterCheckout(opts = {}) {
+  showView('checkout'); $('coWho').textContent = S.me.user.email;
+  stopPoll();
+  if (S.me.pendingPayment && !opts.fresh) {
+    const p = S.me.pendingPayment; S.plan = p.plan; S.method = p.method; S.pay.id = p.id;
+    return renderPaying('waiting'), pollPayment();
+  }
+  renderPlan();
+}
+function coStep(nodes) { const b = clear($('coBody')); b.classList.remove('step-in'); void b.offsetHeight; b.classList.add('step-in'); b.append(...nodes); const t = b.querySelector('h2'); if (t) { t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); } }
+function renderPlan() {
+  stepper(0); S.pay.view = 'plan';
+  const back = S.me && S.me.hasAccess ? h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', onclick: () => enterApp(), text: '← Back to dashboard' }) : null;
+  coStep([
+    back,
+    h('h2', { text: 'Choose your plan' }), h('p', { class: 'sub', text: 'One-time payment. Access starts as soon as the payment is confirmed.' }),
+    !S.cfg.paymentsEnabled ? h('div', { class: 'banner', role: 'alert', text: 'Payments are temporarily unavailable. Please try again later.' }) : null,
+    h('div', { class: 'plans', role: 'radiogroup', 'aria-label': 'Plan' }, S.cfg.plans.map((p) => {
+      const b = h('button', { class: 'plan', role: 'radio', 'aria-checked': String(S.plan === p.key), type: 'button', onclick: () => { S.plan = p.key; [...b.parentNode.children].forEach((c) => c.setAttribute('aria-checked', String(c === b))); } },
+        h('span', { class: 'eyebrow', text: p.label.toUpperCase() }),
+        h('strong', {}, fmtMoney(p.price), h('small', { text: p.currency })),
+        h('span', { style: 'color:var(--tx3);font-size:13px', text: p.key === 'day' ? 'Best for a single case' : 'Best for ongoing reporting' }));
+      return b;
+    })),
+    h('button', { class: 'btn primary block', style: 'margin-top:22px', type: 'button', disabled: !S.cfg.paymentsEnabled, onclick: renderMethod }, 'Continue to payment'),
+  ]);
+}
+function renderMethod() {
+  stepper(1); S.pay.view = 'method';
+  const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
+  const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
+  const wrap = h('div', { class: 'opts', role: 'radiogroup', 'aria-label': 'Payment method' }, S.cfg.methods.map((m) => {
+    const b = h('button', { type: 'button', class: 'opt', role: 'radio', 'aria-checked': String(S.method === m.key), onclick: () => { S.method = m.key; [...wrap.children].forEach((c) => c.setAttribute('aria-checked', String(c === b))); phone.focus(); } },
+      h('span', { class: 'rd' }), h('span', { class: 't' }, h('b', { text: m.label }), h('span', { text: 'Mobile Money · Cameroon' })));
+    return b;
+  }));
+  coStep([
+    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderPlan, text: '← Back' }),
+    h('h2', { text: 'Choose payment method' }), h('p', { class: 'sub', text: 'You will receive a confirmation prompt on this number.' }),
+    wrap,
+    h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money number' }), h('div', { class: 'inp' }, phone), err),
+    h('button', { class: 'btn primary block', type: 'button', onclick: () => {
+      const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
+      if (!S.method) { err.textContent = 'Select a payment method.'; return; }
+      if (!/^6\d{8}$/.test(digits)) { phone.setAttribute('aria-invalid', 'true'); err.textContent = 'Enter a valid 9-digit Cameroon number.'; phone.focus(); return; }
+      S.phone = digits; renderReview();
+    } }, 'Continue'),
+  ]);
+}
+function renderReview(errMsg) {
+  stepper(2); S.pay.view = 'review';
+  const p = planOf(S.plan);
+  const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Pay securely'));
+  btn.addEventListener('click', async () => {
+    setLoading(btn, true);
+    renderPaying('init');
+    try {
+      const d = await api('/api/payment/start', { method: 'POST', body: { plan: S.plan, method: S.method, phone: S.phone } });
+      S.pay.id = d.payment.id; renderPaying('waiting', d.ussd); pollPayment();
+    } catch (e) {
+      if (e.status === 401) { forget(); return showView('auth'); }
+      renderReview(e.message);
+    }
+  });
+  coStep([
+    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderMethod, text: '← Back' }),
+    h('h2', { text: 'Review & pay' }), h('p', { class: 'sub', text: 'Check the details, then confirm.' }),
+    errMsg ? h('div', { class: 'banner', role: 'alert', text: errMsg }) : null,
+    h('div', { class: 'recap' },
+      h('div', {}, h('span', { text: 'Amount' }), h('b', { text: `${fmtMoney(p.price)} ${p.currency}` })),
+      h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label })),
+      h('div', {}, h('span', { text: 'Payment method' }), h('b', { text: methodOf(S.method).label })),
+      h('div', {}, h('span', { text: 'Number' }), h('b', { class: 'mono', text: `+237 ${S.phone}` }))),
+    btn,
+    h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by a licensed provider. Access is granted only after the provider confirms it.' }),
+  ]);
+}
+const TL = [['init', 'Initializing payment...'], ['waiting', 'Waiting for payment...'], ['confirmed', 'Payment confirmed ✓'], ['active', 'Access activated']];
+function renderPaying(stage, ussd) {
+  stepper(2); S.pay.view = 'paying';
+  const idx = TL.findIndex((t) => t[0] === stage);
+  const list = h('ul', { class: 'tl', 'aria-label': 'Payment progress' }, TL.map((t, k) => h('li', { class: k < idx ? 'ok' : k === idx ? (stage === 'active' || stage === 'confirmed' ? 'ok' : 'cur') : '' }, h('span', { class: 'd' }, SVG('check')), t[1])));
+  coStep([
+    h('h2', { text: stage === 'init' ? 'Starting payment' : stage === 'waiting' ? 'Confirm on your phone' : 'Payment received' }),
+    h('p', { class: 'sub', text: stage === 'waiting' ? 'Approve the Mobile Money prompt on your phone. This page updates automatically.' : 'Please keep this page open.' }),
+    stage === 'waiting' && ussd ? h('div', { class: 'note' }, 'If no prompt appears, dial: ', h('b', { text: ussd })) : null,
+    list,
+    stage === 'waiting' ? h('button', { class: 'btn block', type: 'button', onclick: () => { stopPoll(); renderReview(); }, text: 'Cancel and go back' }) : null,
+  ]);
+}
+function payFail(status) {
+  stopPoll();
+  const msg = status === 'expired' ? 'Payment session expired.' : status === 'cancelled' ? 'Payment cancelled.' : 'Payment declined. Please try again.';
+  coStep([
+    h('div', { class: 'done-box', style: 'padding:6px 0 0' }, h('div', { class: 'tick bad' }, SVG('x')), h('h2', { text: msg }), h('p', { class: 'sub', text: 'You have not been charged unless the provider confirms it. You can try again.' }),
+      h('button', { class: 'btn primary block', type: 'button', onclick: renderReview, text: 'Try again' })),
+  ]);
+}
+function pollPayment() {
+  stopPoll();
+  const started = Date.now();
+  const tick = async () => {
+    if (S.pay.view !== 'paying') return;
+    try {
+      const d = await api('/api/payment/status/' + encodeURIComponent(S.pay.id));
+      if (d.status === 'paid') {
+        renderPaying('confirmed');
+        setTimeout(async () => { renderPaying('active'); try { S.me = await api('/api/me'); } catch {} setTimeout(() => (S.me && S.me.hasAccess ? enterApp() : route()), 900); }, 1100);
+        return;
+      }
+      if (['failed', 'expired', 'cancelled'].includes(d.status)) return payFail(d.status);
+    } catch (e) { if (e.status === 401) { forget(); return showView('auth'); } }
+    if (Date.now() - started > (S.cfg.paymentTtlMinutes + 2) * 60000) return payFail('expired');
+    S.pay.timer = setTimeout(tick, 4000);
+  };
+  S.pay.timer = setTimeout(tick, 3000);
+}
+
+/* ============================== APP SHELL ============================== */
+const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['history', 'History', 'history'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
+let accessTimer = null;
+function enterApp(section) {
+  showView('app'); stopPoll();
+  const side = clear($('sideNav')), bar = clear($('bar'));
+  NAV.forEach(([k, label, ic]) => {
+    side.append(h('button', { type: 'button', data: { s: k }, onclick: () => go(k) }, SVG(ic), label));
+    bar.append(h('button', { type: 'button', data: { s: k }, 'aria-label': label, onclick: () => go(k) }, SVG(ic), label));
+  });
+  $('sideEmail').textContent = S.me.user.email;
+  clearInterval(accessTimer);
+  const tick = () => {
+    const left = S.me.access.expiresAt - Date.now();
+    if (left <= 0) { clearInterval(accessTimer); route(); return; }
+    $('sideLeft').textContent = `${planOf(S.me.access.plan).label} · ${fmtLeft(left)} left`;
+  };
+  tick(); accessTimer = setInterval(tick, 30000);
+  go(section || 'overview');
+}
+function go(s) {
+  S.section = s; if (s !== 'report') S.rep = null;
+  document.querySelectorAll('#sideNav button,#bar button').forEach((b) => { if (b.dataset.s === s) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  const m = clear($('main')); m.classList.remove('step-in'); void m.offsetHeight; m.classList.add('step-in');
+  window.scrollTo(0, 0);
+  ({ overview: renderOverview, report: renderReport, history: renderHistory, security: renderSecurity, account: renderAccount })[s](m);
+  const t = m.querySelector('h1'); if (t) { t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); }
+}
+const greeting = () => { const hr = new Date().getHours(); return hr < 5 ? 'Good evening,' : hr < 12 ? 'Good morning,' : hr < 18 ? 'Good afternoon,' : 'Good evening,'; };
+const nameOf = (email) => { const n = email.split('@')[0].replace(/[._-]+/g, ' '); return n.charAt(0).toUpperCase() + n.slice(1); };
+const SEV = { 'Faible': ['Low', 'Minor concern', '#8b8a86'], 'Modérée': ['Moderate', 'Requires attention', '#c9a66b'], 'Élevée': ['High', 'Serious harm or repeated abuse', '#d9925f'], 'Critique — mineurs impliqués': ['Critical', 'Minors involved', '#d9736b'] };
+const sevLabel = (v) => (SEV[v] ? SEV[v][0] : v);
+const statusPill = (s) => h('span', { class: 'pill ' + (s === 'sent' ? 'ok' : 'err'), text: s === 'sent' ? 'SENT' : 'FAILED' });
+
+function renderOverview(m) {
+  const a = S.me.access, left = a.expiresAt - Date.now();
+  m.append(
+    h('div', { class: 'pagehead' }, h('h1', {}, h('small', { text: greeting() }), nameOf(S.me.user.email)), h('span', { class: 'pill ok', text: 'ACTIVE' })),
+    h('div', { class: 'stats' },
+      stat('Access', fmtLeft(left), 'remaining'), stat('Plan', planOf(a.plan).label, 'current plan'),
+      stat('Expiration', fmtDay(a.expiresAt), new Date(a.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })), stat('Reports', String(S.me.reports || 0), 'submitted')),
+    h('div', { class: 'card hero-card' }, h('div', {}, h('h2', { text: 'Create a report' }), h('p', { text: 'A guided five-step form. Your report is sent to WhatsApp’s official support channels with a case ID.' })),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => go('report') }, 'Start a report', SVG('arrow'))),
+    h('div', { class: 'sec-h' }, h('h3', { text: 'Recent reports' }), h('button', { class: 'btn ghost sm', type: 'button', onclick: () => go('history'), text: 'View all' })),
+    h('div', { class: 'list', id: 'recent' }, h('div', { class: 'sk' }), h('div', { class: 'sk' })));
+  api('/api/reports').then((d) => {
+    const box = $('recent'); if (!box) return; clear(box);
+    if (!d.reports.length) return box.append(h('div', { class: 'empty', text: 'No reports yet. Your submitted cases will appear here.' }));
+    d.reports.slice(0, 3).forEach((r) => box.append(h('div', { class: 'item' }, h('div', { class: 'a' }, h('b', { text: r.target }), h('span', {}, `${r.category} · ${sevLabel(r.severity)} · ${fmtDate(r.createdAt)}`)), statusPill(r.status))));
+  }).catch(() => { const box = $('recent'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: 'Could not load reports.' })); } });
+}
+function stat(k, v, s) { return h('div', { class: 'card stat' }, h('span', { class: 'eyebrow', text: k.toUpperCase() }), h('strong', { text: v }), h('span', { class: 's', text: s })); }
+
+/* ============================= REPORT WIZARD ============================= */
+const STEPS = ['Category', 'Severity', 'Target', 'Evidence', 'Review'];
+const WA_RE = /^(\+?[0-9 ()\-]{6,20}|https?:\/\/(wa\.me|chat\.whatsapp\.com|api\.whatsapp\.com)\/\S{1,150})$/i;
+function renderReport(m) {
+  if (!S.rep) S.rep = { step: 0, category: '', severity: '', target: '', message: '', dests: new Set(S.cfg.destinations.map((d) => d.email)), done: null };
+  const R = S.rep;
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'New report' })), h('div', { class: 'wiz', id: 'wiz' }));
+  drawWiz();
+}
+function drawWiz() {
+  const R = S.rep, box = $('wiz'); if (!box) return; clear(box);
+  if (R.done) return drawDone(box);
+  box.append(h('div', { class: 'prog', 'aria-label': 'Progress' }, STEPS.map((s, i) => h('div', { class: i < R.step ? 'done' : i === R.step ? 'cur' : '', data: { l: `0${i + 1} — ${s}` }, 'aria-current': i === R.step ? 'step' : null, text: `0${i + 1} — ${s}` }))));
+  const body = h('div', { class: 'step-in' }); box.append(body);
+  const err = h('div', { class: 'ferr', role: 'alert', style: 'margin-top:12px' });
+  const next = (label, fn, loading) => h('button', { class: 'btn primary', type: 'button', id: 'wizNext', onclick: fn }, h('span', { class: 'sp-label', text: label }));
+  const nav = (nextBtn) => h('div', { class: 'nav-btns' }, R.step > 0 ? h('button', { class: 'btn', type: 'button', onclick: () => { R.step--; drawWiz(); }, text: 'Back' }) : h('span'), nextBtn);
+  const advance = (ok, msg) => { if (!ok) { err.textContent = msg; return; } R.step++; drawWiz(); };
+
+  if (R.step === 0) {
+    body.append(h('h2', { text: 'What are you reporting?' }), h('p', { class: 'hint', text: 'Select the category that best matches the behaviour.' }),
+      radios(S.cfg.categories.map((c) => ({ v: c, t: c })), R.category, (v) => { R.category = v; err.textContent = ''; }), err,
+      nav(next('Continue', () => advance(R.category, 'Select a category to continue.'))));
+  } else if (R.step === 1) {
+    body.append(h('h2', { text: 'How severe is it?' }), h('p', { class: 'hint', text: 'Severity helps support teams prioritise.' }),
+      radios(S.cfg.severities.map((v) => ({ v, t: sevLabel(v), s: SEV[v] ? SEV[v][1] : '', dot: SEV[v] ? SEV[v][2] : '' })), R.severity, (v) => { R.severity = v; err.textContent = ''; }, true), err,
+      nav(next('Continue', () => advance(R.severity, 'Select a severity to continue.'))));
+  } else if (R.step === 2) {
+    const inp = h('input', { id: 'tgt', type: 'text', placeholder: '+237 6XX XXX XXX  or  https://wa.me/…', autocomplete: 'off', value: R.target, 'aria-describedby': 'tgt-err', maxlength: '200' });
+    err.id = 'tgt-err';
+    body.append(h('h2', { text: 'Which account?' }), h('p', { class: 'hint', text: 'Enter the WhatsApp number, or a wa.me / group invite link.' }),
+      h('div', { class: 'inp' }, inp), err,
+      nav(next('Continue', () => { R.target = inp.value.trim(); const ok = WA_RE.test(R.target); if (!ok) inp.setAttribute('aria-invalid', 'true'); advance(ok, 'Enter a valid WhatsApp number or link.'); })));
+    inp.addEventListener('input', () => { inp.removeAttribute('aria-invalid'); err.textContent = ''; });
+    setTimeout(() => inp.focus(), 60);
+  } else if (R.step === 3) {
+    const ta = h('textarea', { id: 'msg', placeholder: 'Paste the offending message(s) and describe what happened.', maxlength: '5000', 'aria-label': 'Evidence or message' }); ta.value = R.message;
+    const cnt = h('div', { class: 'cnt', text: `${ta.value.length} / 5000` });
+    ta.addEventListener('input', () => { R.message = ta.value; cnt.textContent = `${ta.value.length} / 5000`; });
+    body.append(h('h2', { text: 'Add evidence' }), h('p', { class: 'hint', text: 'Paste the message and any context. Optional, but reports with evidence are reviewed faster.' }),
+      h('div', { class: 'inp' }, ta), cnt, nav(next('Continue', () => { R.message = ta.value; R.step++; drawWiz(); })));
+    setTimeout(() => ta.focus(), 60);
+  } else {
+    const sendBtn = h('button', { class: 'btn primary', type: 'button', id: 'submitBtn' }, h('span', { class: 'sp-label', text: 'Submit report' }));
+    const destWrap = h('div', { class: 'opts' }, S.cfg.destinations.map((d) => {
+      const b = h('button', { type: 'button', class: 'opt cb', role: 'checkbox', 'aria-checked': String(R.dests.has(d.email)), onclick: () => { if (R.dests.has(d.email)) R.dests.delete(d.email); else R.dests.add(d.email); b.setAttribute('aria-checked', String(R.dests.has(d.email))); err.textContent = ''; } },
+        h('span', { class: 'rd' }), h('span', { class: 't' }, h('b', { text: d.note || 'WhatsApp support' }), h('span', { text: d.email })));
+      return b;
+    }));
+    body.append(h('h2', { text: 'Review & submit' }), h('p', { class: 'hint', text: 'Choose where to send the report, then confirm the summary.' }),
+      h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), destWrap,
+      h('div', { class: 'blk-t', text: 'Summary' }),
+      h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
+      err, nav(sendBtn));
+    sendBtn.addEventListener('click', async () => {
+      if (!R.dests.size) { err.textContent = 'Choose at least one destination.'; return; }
+      sendBtn.classList.add('busy'); sendBtn.disabled = true; sendBtn.setAttribute('aria-busy', 'true'); sendBtn.querySelector('.sp-label').textContent = 'Sending report...';
+      try {
+        const d = await api('/api/report', { method: 'POST', body: { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests] } });
+        R.done = d; try { S.me = await api('/api/me'); } catch {}
+        drawWiz();
+      } catch (e) {
+        sendBtn.classList.remove('busy'); sendBtn.disabled = false; sendBtn.setAttribute('aria-busy', 'false'); sendBtn.querySelector('.sp-label').textContent = 'Submit report';
+        if (e.status === 401) { forget(); return showView('auth'); }
+        if (e.status === 403) { toast(e.message, true); return route(); }
+        err.textContent = e.message;
+      }
+    });
+  }
+}
+function radios(items, cur, onPick, two) {
+  const wrap = h('div', { class: 'opts' + (two ? ' two' : ''), role: 'radiogroup' });
+  items.forEach((it) => {
+    const b = h('button', { type: 'button', class: 'opt', role: 'radio', 'aria-checked': String(cur === it.v), onclick: () => { onPick(it.v); [...wrap.children].forEach((c) => c.setAttribute('aria-checked', String(c === b))); } },
+      it.dot ? h('span', { class: 'dot', style: `background:${it.dot}` }) : null, h('span', { class: 'rd' }),
+      h('span', { class: 't' }, h('b', { text: it.t }), it.s ? h('span', { text: it.s }) : null));
+    wrap.append(b);
+  });
+  return wrap;
+}
+function drawDone(box) {
+  const d = S.rep.done, ok = d.sent > 0;
+  const cid = h('span', { text: d.caseId });
+  box.append(h('div', { class: 'card done-box step-in' },
+    h('div', { class: 'tick' + (ok ? '' : ' bad') }, SVG(ok ? 'check' : 'x')),
+    h('h2', { text: ok ? 'Report submitted' : 'Report saved, not delivered' }),
+    h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: ok ? `Delivered to ${d.sent} of ${d.total} destination${d.total > 1 ? 's' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.' }),
+    h('div', {}, h('div', { class: 'caseid' }, h('span', { class: 'eyebrow', text: 'CASE' }), cid,
+      h('button', { class: 'btn ghost sm', type: 'button', 'aria-label': 'Copy case ID', onclick: async () => { try { await navigator.clipboard.writeText(d.caseId); toast('Case ID copied'); } catch { toast('Copy not available', true); } } }, SVG('copy')))),
+    h('div', { style: 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => { S.rep = null; go('report'); }, text: 'New report' }),
+      h('button', { class: 'btn', type: 'button', onclick: () => go('history'), text: 'View history' }))));
+}
+
+/* ================================ HISTORY ================================ */
+function renderHistory(m) {
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'History' })), h('div', { id: 'hist' }, h('div', { class: 'list' }, h('div', { class: 'sk' }), h('div', { class: 'sk' }), h('div', { class: 'sk' }))));
+  api('/api/reports').then((d) => {
+    const box = $('hist'); if (!box) return; clear(box);
+    if (!d.reports.length) return box.append(h('div', { class: 'empty' }, 'No reports yet.', h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary sm', type: 'button', onclick: () => go('report'), text: 'Create a report' }))));
+    box.append(h('div', { class: 'tw' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Case ID', 'Date', 'Category', 'Severity', 'Target', 'Status'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, d.reports.map((r) => h('tr', {},
+        h('td', { data: { l: 'Case ID' }, class: 'cid', text: r.caseId || '—' }), h('td', { data: { l: 'Date' }, text: fmtDate(r.createdAt) }),
+        h('td', { data: { l: 'Category' }, text: r.category }), h('td', { data: { l: 'Severity' }, text: sevLabel(r.severity) }),
+        h('td', { data: { l: 'Target' }, class: 'tg', text: r.target }), h('td', { data: { l: 'Status' } }, statusPill(r.status))))))));
+  }).catch((e) => { const box = $('hist'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: e.message })); } });
+}
+
+/* ========================== SECURITY / ACCOUNT ========================== */
+function renderSecurity(m) {
+  const row = (t, s) => h('div', { class: 'item' }, h('div', { class: 'a' }, h('b', { text: t }), h('span', { text: s })), h('span', { class: 'pill ok', text: 'ON' }));
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Security' })),
+    h('div', { class: 'list' },
+      row('Email verified', 'Your address was confirmed with a one-time code.'),
+      row('Password protection', 'Passwords are salted and hashed with scrypt; never stored in clear text.'),
+      row('Session tokens', 'Stored hashed on the server and valid for 30 days.'),
+      row('Verified payments', 'Access is only activated after your payment provider confirms the transaction.'),
+      row('Rate limiting', 'Sensitive actions are throttled to block abuse and brute force.')),
+    h('div', { style: 'margin-top:22px' }, h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out of this device')));
+}
+function renderAccount(m) {
+  const a = S.me.access;
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Account' }), h('span', { class: 'pill ok', text: 'ACTIVE' })),
+    h('div', { class: 'kv' },
+      h('span', { text: 'Email' }), h('b', { text: S.me.user.email }),
+      h('span', { text: 'Plan' }), h('b', { text: planOf(a.plan).label }),
+      h('span', { text: 'Expires' }), h('b', { text: fmtDate(a.expiresAt) }),
+      h('span', { text: 'Member since' }), h('b', { text: S.me.user.createdAt ? fmtDay(S.me.user.createdAt) : '—' }),
+      h('span', { text: 'Reports' }), h('b', { text: String(S.me.reports || 0) })),
+    h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:22px' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => enterCheckout({ fresh: true }), text: 'Extend access' }),
+      h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out')));
+}
+
+/* ================================ INIT ================================ */
+(async function init() {
+  try { await ensureCfg(); } catch {}
+  if (S.token) route(); else showView('landing');
 })();
 </script>
 </body>
