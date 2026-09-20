@@ -430,7 +430,7 @@ const provider = {
     const ref = init && init.transaction && init.transaction.reference;
     if (!ref) throw new Error('Provider collect: no reference');
     await this.call('POST', `/payments/${encodeURIComponent(ref)}`, {
-      channel, data: { account_number: `+${phone}` },
+      channel, data: { phone: `+${phone}` },
     });
     return { reference: ref, operator: channel === 'cm.mtn' ? 'MTN' : 'Orange' };
   },
