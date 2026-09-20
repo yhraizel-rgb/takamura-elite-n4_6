@@ -3,7 +3,7 @@
 /* ============================================================================
    TAKAMURA ELITE — index.js (v2)
    Accounts + email verification (6-digit code) + AUTOMATED Mobile Money payment
-   (Orange Money / MTN MoMo via NotchPay) + reports + history + admin.
+   (Orange Money / MTN MoMo via CamPay) + reports + history + admin.
 
    Files: index.html, index.js, package.json only.
    All secrets come from environment variables (see the ENV block below).
@@ -32,14 +32,15 @@ const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans B
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
 const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
-// NotchPay (https://notchpay.co) — Orange Money + MTN MoMo, Cameroun.
-// Clés SANDBOX en dur, comme demandé. Remplace-les par tes clés "live" avant la mise en production réelle.
-const PAYMENT_BASE_URL = 'https://api.notchpay.co';
-const PAYMENT_PUBLIC_KEY = 'pk_test.gMC7Rw8w0fJ9d0kL83wvncrPnWEpA2BfpNYSG1u5uNe28X4CxtkR9yeutupvhDtfwzGRrg1X5wZtijJjp2blpgqsyOMOWmzKiaQp4MXKwpd9oRQrL6tsnPicShAQq';
-const PAYMENT_SECRET = 'sk_test.WRBFyHWS767dp59gIXhweqf2JTcINgzxaw6IrW7Plbok8vQMGDcT8urPHg22xxwveIIqrtwIylnJXLqodVB7rDFxDISXdU7xl1mZV5VVXWWZD6DHQeJjnylPXc5g6'; // clé privée : sert aux appels serveur
-const PAYMENT_WEBHOOK_SECRET = 'hsk_test.3DlBdqkXZ4kHkN5MRO2dGeFTvIrhjG88nIn97JgDt6tUxTtrNCrgriEH9xhbYJL8Iy39FSuilCGPpcKUzeGvILbIrS6rG52vZNg9KsAiJdHBXfvnFdsbaJLJoa4Vs'; // hash key du webhook
+// CamPay (https://campay.net) — Orange Money + MTN MoMo, Cameroun.
+// Clés DEMO en dur, comme demandé. PAYMENT_ENV = 'DEV' (demo.campay.net, argent fictif) ou
+// 'PROD' (www.campay.net, argent réel) — passe à 'PROD' avec tes clés live avant la mise en prod réelle.
+const PAYMENT_ENV = env('PAYMENT_ENV', 'DEV');
+const PAYMENT_BASE_URL = PAYMENT_ENV === 'PROD' ? 'https://www.campay.net/api' : 'https://demo.campay.net/api';
+const PAYMENT_TOKEN = 'C4-/DDhtTqmIDB7+~JKsrQjk/8wRCOY.OlNsY7Uv'; // jeton d'accès permanent de l'application CamPay
+const PAYMENT_WEBHOOK_KEY = 'JiCvshCUgXZd_PN_TS9Y4Co5IfKYCa6xwzHvKocBLoKBkPeUwkPQEwc_8FFTcmIogcdwxvjZ-rzVdOiYpm2cKA'; // clé webhook CamPay
 const PAYMENT_CURRENCY = env('PAYMENT_CURRENCY', 'XAF');
-const PAYMENTS_ENABLED = !!(PAYMENT_BASE_URL && PAYMENT_PUBLIC_KEY && PAYMENT_WEBHOOK_SECRET);
+const PAYMENTS_ENABLED = !!(PAYMENT_BASE_URL && PAYMENT_TOKEN);
 
 const missing = [];
 if (!TURSO_DATABASE_URL) missing.push('TURSO_DATABASE_URL');
@@ -54,7 +55,8 @@ if (ADMIN_PASSWORD.length < 12) {
   process.exit(1);
 }
 if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) console.warn('[BOOT] BREVO_API_KEY / BREVO_SENDER_EMAIL missing: emails will fail.');
-if (!PAYMENTS_ENABLED) console.warn('[BOOT] Payment env vars missing (PAYMENT_SECRET, PAYMENT_WEBHOOK_SECRET): payments disabled.');
+if (!PAYMENTS_ENABLED) console.warn('[BOOT] Payment env vars missing (PAYMENT_TOKEN): payments disabled.');
+if (PAYMENTS_ENABLED && !PAYMENT_WEBHOOK_KEY) console.warn('[BOOT] PAYMENT_WEBHOOK_KEY missing: webhook signature will not be checked (server-side reconcile still protects activation).');
 
 const { createClient } = require('@tursodatabase/serverless/compat');
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
@@ -393,73 +395,50 @@ async function sendAdminPaymentNotice(email, plan, amount, method) {
 }
 
 /* ============================ PAYMENT PROVIDER ============================= */
-// NotchPay flow (server side only — the browser never talks to the provider directly):
-//   POST {BASE}/payments               -> { transaction: { reference, status, ... } }   (init)
-//   POST {BASE}/payments/{reference}   -> { transaction: { reference, status: 'processing' } }
-//                                          (triggers the actual USSD/Mobile-Money prompt: "Direct API Processing")
-//   GET  {BASE}/payments/{reference}   -> { transaction: { status: pending|processing|complete|failed|canceled|expired, ... } }
-//   Webhook: POST with header `x-notch-signature` = HMAC-SHA256(rawBody, hash key), hex-encoded.
-const NOTCH_CHANNEL = { orange_money: 'cm.orange', mtn_momo: 'cm.mtn' };
-const NOTCH_STATUS = { complete: 'SUCCESSFUL', failed: 'FAILED', canceled: 'CANCELLED', expired: 'EXPIRED' };
-
+// CamPay flow (server side only — the browser never talks to the provider directly):
+//   POST {BASE}/collect/            -> { reference }              (pushes the USSD/Mobile-Money prompt immediately;
+//                                        CamPay auto-detects MTN vs Orange from the phone number, no channel needed)
+//   GET  {BASE}/transaction/{ref}/  -> { status: PENDING|SUCCESSFUL|FAILED, reference, external_reference, ... }
+//   Webhook: POST with fields status/reference/amount/currency/operator/external_reference/signature in the body.
+//            The signature scheme isn't relied on here — every webhook only triggers a server-side re-check via
+//            getTransaction() with our own token, which is the sole source of truth (see reconcile()/applyProviderTx()).
 const provider = {
   async call(method, p, body) {
     const r = await fetch(`${PAYMENT_BASE_URL}${p}`, {
       method,
-      // Standard endpoints (create/charge/read a payment) authenticate with the PUBLIC key.
-      // The private key is reserved for high-risk endpoints (transfers, balance) via X-Grant.
-      headers: { 'Content-Type': 'application/json', Authorization: PAYMENT_PUBLIC_KEY },
+      headers: { 'Content-Type': 'application/json', Authorization: `Token ${PAYMENT_TOKEN}` },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(25000),
     });
     let data = null;
     try { data = await r.json(); } catch { /* empty */ }
-    if (!r.ok) throw new Error(`Provider ${method} ${p} failed (${r.status})${data && data.message ? `: ${data.message}` : ''}`);
+    if (!r.ok) throw new Error(`Provider ${method} ${p} failed (${r.status})${data && (data.message || data.detail) ? `: ${data.message || data.detail}` : ''}`);
     return data || {};
   },
-  // Initializes the payment, then immediately triggers the Mobile Money prompt on the
-  // customer's phone (NotchPay "Direct API Processing") — no hosted redirect page.
-  async collect({ amount, currency, phone, method, description, externalReference }) {
-    const channel = NOTCH_CHANNEL[method];
-    if (!channel) throw new Error('Unknown payment channel');
-    const init = await this.call('POST', '/payments', {
-      amount, currency, description,
-      customer: { phone: `+${phone}` },
-      metadata: { external_reference: externalReference },
+  // Triggers the Mobile Money prompt directly on the customer's phone — no hosted redirect page,
+  // no channel to pick: CamPay figures out MTN vs Orange from the "from" phone number itself.
+  async collect({ amount, currency, phone, description, externalReference }) {
+    const init = await this.call('POST', '/collect/', {
+      amount: String(amount), currency, from: phone, description, external_reference: externalReference,
     });
-    const ref = init && init.transaction && init.transaction.reference;
+    const ref = init && init.reference;
     if (!ref) throw new Error('Provider collect: no reference');
-    await this.call('POST', `/payments/${encodeURIComponent(ref)}`, {
-      channel, data: { phone: `+${phone}` },
-    });
-    return { reference: ref, operator: channel === 'cm.mtn' ? 'MTN' : 'Orange' };
+    return { reference: ref, operator: undefined };
   },
   async getTransaction(reference) {
-    const d = await this.call('GET', `/payments/${encodeURIComponent(reference)}`);
-    const tx = d && d.transaction;
-    if (!tx) return {};
+    const tx = await this.call('GET', `/transaction/${encodeURIComponent(reference)}/`);
+    if (!tx || tx.status == null) return {};
     return {
-      status: NOTCH_STATUS[tx.status] || String(tx.status || '').toUpperCase(),
+      status: String(tx.status || '').toUpperCase(), // CamPay already returns PENDING/SUCCESSFUL/FAILED
       reference: tx.reference,
       amount: Number(tx.amount),
       currency: tx.currency,
-      external_reference: tx.metadata && tx.metadata.external_reference,
-      operator: (tx.payment_method || '').startsWith('mtn') ? 'MTN' : undefined,
-      operator_reference: tx.id,
+      external_reference: tx.external_reference,
+      operator: tx.operator,
+      operator_reference: tx.operator_reference || tx.code,
     };
   },
 };
-
-// HMAC-SHA256 check for NotchPay's `x-notch-signature` header, computed over the RAW request body.
-function verifyNotchSignature(rawBody, signature, secret) {
-  try {
-    if (!rawBody || !signature) return false;
-    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    const given = Buffer.from(String(signature), 'hex');
-    const exp = Buffer.from(expected, 'hex');
-    return given.length === exp.length && crypto.timingSafeEqual(given, exp);
-  } catch { return false; }
-}
 
 /* ============================ PAYMENT DOMAIN LOGIC ========================= */
 const getPayment = async (id) => {
@@ -789,14 +768,14 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
     const now = Date.now();
     await db.execute({
       sql: `INSERT INTO payments (id, user_id, plan, amount, currency, method, provider, phone_hint, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'notchpay', ?, 'pending', ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, 'campay', ?, 'pending', ?, ?)`,
       args: [id, user.id, plan.key, plan.price, PAYMENT_CURRENCY, method.key, `***${phone.slice(-3)}`, now, now],
     });
 
     let started;
     try {
       started = await provider.collect({
-        amount: plan.price, currency: PAYMENT_CURRENCY, phone: `237${phone}`, method: method.key,
+        amount: plan.price, currency: PAYMENT_CURRENCY, phone: `237${phone}`,
         description: `Takamura Elite ${plan.label}`, externalReference: id,
       });
     } catch (e) {
@@ -808,7 +787,7 @@ app.post('/api/payment/start', limitPayStart, async (req, res) => {
       sql: `UPDATE payments SET provider_ref = ?, status = 'processing', operator = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
       args: [String(started.reference), cleanLine(started.operator, 20), Date.now(), id],
     });
-    // NotchPay pushes the Mobile Money prompt directly to the customer's phone: no USSD code to display.
+    // CamPay pushes the Mobile Money prompt directly to the customer's phone: no USSD code to display.
     res.json({ payment: publicPayment(await getPayment(id)), ussd: '' });
   } catch (e) {
     console.error('[payment/start]', e.message);
@@ -834,22 +813,22 @@ app.get('/api/payment/status/:id', limitPayStatus, async (req, res) => {
   }
 });
 
-// Provider callback (POST only, per NotchPay). The signature is verified over the RAW body with the
-// webhook hash key; then the transaction is re-fetched from the provider with our own credentials and
-// compared to our record (amount, currency, reference). The payload itself is never trusted for the
-// decision. Replays are harmless (compare-and-set in activatePayment).
+// Provider callback (POST, per CamPay). CamPay's webhook signature scheme is best-effort here (see note
+// below), so the payload itself is NEVER trusted for the decision: it only tells us which payment to
+// re-check, and the transaction is then re-fetched from the provider with our own token (getTransaction)
+// and compared to our record (amount, currency, reference) in applyProviderTx(). Replays are harmless
+// (compare-and-set in activatePayment).
 app.post('/api/payment/webhook', limitWebhook, async (req, res) => {
   try {
     if (!PAYMENTS_ENABLED) return res.status(503).json({ error: 'Unavailable.' });
-    const signature = req.header('x-notch-signature') || '';
-    if (!verifyNotchSignature(req.rawBody, signature, PAYMENT_WEBHOOK_SECRET)) {
-      console.warn('[webhook] invalid signature');
-      return res.status(401).json({ error: 'Invalid signature.' });
-    }
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const data = body.data && typeof body.data === 'object' ? body.data : body;
-    const reference = cleanLine(data.reference, 80);
-    const externalRef = cleanLine(data.metadata && data.metadata.external_reference, 60);
+    // If CamPay's dashboard gives you a documented signature header/field, verify it here before trusting
+    // even this much of the payload. For now we just use it, if present, as a loose sanity filter.
+    if (PAYMENT_WEBHOOK_KEY && body.signature && String(body.signature) !== PAYMENT_WEBHOOK_KEY) {
+      console.warn('[webhook] unexpected signature value, proceeding to server-side re-check anyway');
+    }
+    const reference = cleanLine(body.reference, 80);
+    const externalRef = cleanLine(body.external_reference, 60);
     if (!reference && !externalRef) return res.status(400).json({ error: 'Invalid payload.' });
 
     let p = null;
