@@ -310,6 +310,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
         <div class="cta">
           <button class="btn primary" data-go="auth-login">Access the platform <svg class="i"><use href="#i-arrow"/></svg></button>
           <button class="btn" id="howBtn">How it works</button>
+          <button class="btn ghost" id="demoBtn">Try the demo</button>
         </div>
         <div class="trust">
           <span><svg class="i"><use href="#i-lock"/></svg>Secure access</span>
@@ -437,7 +438,7 @@ const store = {
 const S = {
   cfg: null, token: store.get(), me: null, verifyEmail: '', section: 'overview',
   topup: { amount: 1000, proof: '', proofMime: '', view: 'amount', poll: null },
-  rep: null, resendT: null,
+  rep: null, resendT: null, demo: false,
 };
 const SVG = (name, cls) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'i' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true'); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', '#i-' + name); s.append(u); return s; };
 function h(tag, props, ...kids) {
@@ -510,6 +511,7 @@ document.addEventListener('click', (e) => {
   const g = e.target.closest('[data-go]');
   if (!g) return;
   const to = g.dataset.go;
+  S.demo = false;
   if (to === 'landing') return showView('landing');
   if (to === 'auth-login' || to === 'auth-register') {
     if (S.token && to === 'auth-login') return route();
@@ -518,6 +520,18 @@ document.addEventListener('click', (e) => {
   }
 });
 $('howBtn').addEventListener('click', () => $('how').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion:reduce)').matches ? 'auto' : 'smooth' }));
+async function enterDemo() {
+  const btn = $('demoBtn'); setLoading(btn, true);
+  try {
+    await ensureCfg();
+    S.demo = true;
+    S.me = { user: { email: 'demo@takamura-elite.com' }, balance: 0, minUsableBalance: S.cfg.minUsableBalance || 3000, hasAccess: true, reports: 0, pendingTopup: null };
+    S.rep = null;
+    enterApp('overview');
+  } catch { toast('Demo unavailable right now. Please try again shortly.', true); }
+  finally { setLoading(btn, false); }
+}
+$('demoBtn').addEventListener('click', enterDemo);
 function setAuthMode(m) {
   $('f-login').hidden = m !== 'login'; $('f-register').hidden = m !== 'register';
   ['loginEmail', 'loginPassword', 'regEmail', 'regPassword', 'regPassword2'].forEach((i) => fieldErr(i, ''));
@@ -632,13 +646,14 @@ $('verifyBtn').addEventListener('click', submitVerify);
 
 async function logout() {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
-  forget(); stopPoll(); showView('landing');
+  forget(); S.demo = false; stopPoll(); showView('landing');
 }
 $('coLogout').addEventListener('click', logout);
 $('sideLogout').addEventListener('click', logout);
 
 /* =============================== ROUTING =============================== */
 async function route() {
+  S.demo = false;
   if (!S.token) return showView('landing');
   try {
     await ensureCfg();
@@ -760,9 +775,10 @@ function pollMe() {
 const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['history', 'History', 'history'], ['wallet', 'Portefeuille', 'lock'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
 let balanceTimer = null;
 function updateBalanceUI() {
-  const bal = `${fmtMoney(S.me.balance)} FCFA`;
+  const bal = S.demo ? 'Demo mode' : `${fmtMoney(S.me.balance)} FCFA`;
   $('sideLeft').textContent = bal;
   const top = $('topBalance'); if (top) top.textContent = bal;
+  const badge = $('sideBadge'); if (badge) badge.textContent = S.demo ? 'DEMO' : 'ACTIF';
 }
 function enterApp(section) {
   showView('app'); stopPoll();
@@ -774,10 +790,12 @@ function enterApp(section) {
   $('sideEmail').textContent = S.me.user.email;
   updateBalanceUI();
   clearInterval(balanceTimer);
-  balanceTimer = setInterval(async () => { try { S.me = await api('/api/me'); updateBalanceUI(); if (S.section === 'wallet') go('wallet'); } catch {} }, 30000);
+  if (!S.demo) balanceTimer = setInterval(async () => { try { S.me = await api('/api/me'); updateBalanceUI(); if (S.section === 'wallet') go('wallet'); } catch {} }, 30000);
   go(section || 'overview');
 }
+const DEMO_SECTIONS = ['overview', 'report'];
 function go(s) {
+  if (S.demo && !DEMO_SECTIONS.includes(s)) { toast('This section needs the live platform — please sign in.', true); return; }
   S.section = s; if (s !== 'report') S.rep = null;
   document.querySelectorAll('#sideNav button,#bar button').forEach((b) => { if (b.dataset.s === s) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const m = clear($('main')); m.classList.remove('step-in'); void m.offsetHeight; m.classList.add('step-in');
@@ -793,7 +811,8 @@ const statusPill = (s) => h('span', { class: 'pill ' + (s === 'sent' ? 'ok' : 'e
 
 function renderOverview(m) {
   m.append(
-    h('div', { class: 'pagehead' }, h('h1', {}, h('small', { text: greeting() }), nameOf(S.me.user.email)), h('span', { class: 'pill ok', text: 'ACTIF' })),
+    h('div', { class: 'pagehead' }, h('h1', {}, h('small', { text: greeting() }), nameOf(S.me.user.email)), h('span', { class: 'pill ' + (S.demo ? 'gold' : 'ok'), text: S.demo ? 'DEMO' : 'ACTIF' })),
+    S.demo ? h('div', { style: 'padding:12px 14px;border-radius:10px;font-size:13.5px;margin-bottom:20px;border:1px solid var(--gold-line);background:var(--gold-dim);color:var(--gold2)' }, 'You’re viewing a live preview. Some sections and the last step of the report form are only available on the live platform.') : null,
     h('div', { class: 'stats' },
       stat('Solde', `${fmtMoney(S.me.balance)} FCFA`, 'disponible'), stat('Minimum requis', `${fmtMoney(S.me.minUsableBalance)} FCFA`, 'pour utiliser la plateforme'),
       stat('Reports', String(S.me.reports || 0), 'soumis')),
@@ -801,6 +820,7 @@ function renderOverview(m) {
       h('button', { class: 'btn primary', type: 'button', onclick: () => go('report') }, 'Start a report', SVG('arrow'))),
     h('div', { class: 'sec-h' }, h('h3', { text: 'Recent reports' }), h('button', { class: 'btn ghost sm', type: 'button', onclick: () => go('history'), text: 'View all' })),
     h('div', { class: 'list', id: 'recent' }, h('div', { class: 'sk' }), h('div', { class: 'sk' })));
+  if (S.demo) { const box = $('recent'); clear(box); box.append(h('div', { class: 'empty', text: 'No reports yet. Your submitted cases will appear here.' })); return; }
   api('/api/reports').then((d) => {
     const box = $('recent'); if (!box) return; clear(box);
     if (!d.reports.length) return box.append(h('div', { class: 'empty', text: 'No reports yet. Your submitted cases will appear here.' }));
@@ -845,8 +865,22 @@ function drawWiz() {
     inp.addEventListener('input', () => { inp.removeAttribute('aria-invalid'); err.textContent = ''; });
     setTimeout(() => inp.focus(), 60);
   } else if (R.step === 3) {
-    const ta = h('textarea', { id: 'msg', placeholder: 'Paste the offending message(s) and describe what happened.', maxlength: '5000', 'aria-label': 'Evidence or message' }); ta.value = R.message;
+    const ta = h('textarea', { id: 'msg', placeholder: 'Paste the offending message(s) and describe what happened.', maxlength: '5000', 'aria-label': 'Evidence or message', disabled: S.demo });
+    ta.value = R.message;
     const cnt = h('div', { class: 'cnt', text: `${ta.value.length} / 5000` });
+    if (S.demo) {
+      ta.style.opacity = '.55'; ta.style.cursor = 'not-allowed';
+      body.append(
+        h('h2', { text: 'Add evidence' }),
+        h('p', { class: 'hint', text: 'Paste the message and any context. Optional, but reports with evidence are reviewed faster.' }),
+        h('div', { class: 'inp' }, ta), cnt,
+        h('div', { style: 'display:flex;gap:10px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-top:16px;border:1px solid var(--gold-line);background:var(--gold-dim);color:var(--gold2);font-size:13.5px;line-height:1.5' },
+          SVG('lock'), h('span', {}, 'This is the end of the demo. Please sign in to the live platform to add evidence and submit your report.')),
+        h('div', { class: 'nav-btns' },
+          h('button', { class: 'btn', type: 'button', onclick: () => { R.step--; drawWiz(); }, text: 'Back' }),
+          h('button', { class: 'btn primary', type: 'button', onclick: () => { S.demo = false; S.rep = null; setAuthMode('login'); showView('auth'); }, text: 'Sign in to continue' })));
+      return;
+    }
     ta.addEventListener('input', () => { R.message = ta.value; cnt.textContent = `${ta.value.length} / 5000`; });
     body.append(h('h2', { text: 'Add evidence' }), h('p', { class: 'hint', text: 'Paste the message and any context. Optional, but reports with evidence are reviewed faster.' }),
       h('div', { class: 'inp' }, ta), cnt, nav(next('Continue', () => { R.message = ta.value; R.step++; drawWiz(); })));
