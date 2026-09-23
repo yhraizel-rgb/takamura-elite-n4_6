@@ -1,7 +1,7 @@
 {
   "name": "takamura-elite",
   "version": "1.0.0",
-  "description": "Takamura Elite — portail de signalement WhatsApp avec accès payant (24h / 1 semaine) et stockage Turso.",
+  "description": "Takamura Elite — portail de signalement WhatsApp avec portefeuille (recharge Money Fusion, validation admin) et stockage Turso.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -24,7 +24,6 @@
   "dependencies": {
     "@tursodatabase/serverless": "^1.4.0",
     "express": "^5.2.1",
-    "fusionpay": "^0.0.7",
     "nodemailer": "^10.0.9"
   }
 }

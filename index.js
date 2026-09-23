@@ -2,12 +2,12 @@
 
 /* ============================================================================
    TAKAMURA ELITE — index.js (v3)
-   Accounts + email verification (6-digit code) + AUTOMATED payment via Money Fusion
-   (moneyfusion.net) + reports + history + admin.
+   Accounts + email verification (6-digit code) + WALLET (recharge Money Fusion,
+   preuve de paiement envoyée par l'utilisateur, validation manuelle par un admin)
+   + reports + history + admin.
 
    Files: index.html, index.js, package.json only.
-   Valeurs en dur à la demande — seule BREVO_API_KEY reste en variable d'environnement
-   (voir le bloc ENV ci-dessous et la note de sécurité en fin de réponse).
+   All secrets come from environment variables (see the ENV block below).
    ============================================================================ */
 
 const express = require('express');
@@ -17,9 +17,6 @@ const path = require('path');
 const { promisify } = require('util');
 
 const scrypt = promisify(crypto.scrypt);
-// Bibliothèque officielle-écosystème pour l'API de paiement Money Fusion (create + statut).
-// Utilisée pour ne PAS deviner le format JSON exact de leur API non documentée publiquement.
-const { FusionPay } = require('fusionpay');
 
 /* ================================ ENV ====================================== */
 // Valeurs en dur, à la demande — seule BREVO_API_KEY reste en variable d'environnement.
@@ -36,24 +33,15 @@ const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans B
 const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
 const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 
-// Money Fusion (https://moneyfusion.net) — remplace NotchPay/CamPay.
-// L'URL ci-dessous N'EST PAS un des deux liens "Lien de paiement" du dashboard (ceux-là sont des
-// pages figées pour vendre un produit à prix fixe et ne permettent pas d'associer un user_id).
-// Il faut créer une APPLICATION de paiement (API) dans le dashboard Money Fusion — pas un lien —
-// pour obtenir une URL d'API propre au compte. Remplace la valeur ci-dessous par cette URL.
-const MONEYFUSION_API_URL = 'https://www.pay.moneyfusion.net/DevHub/b9d10a3669a238e9/pay/';
-const PUBLIC_BASE_URL = 'https://takamura-elite2026.up.railway.app';
-const CURRENCY_LABEL = 'FCFA';
-// Liens de paiement fixes (dashboard Money Fusion → "Lien de paiement"), un par plan.
-// Contrairement à l'API (MONEYFUSION_API_URL), un lien fixe ne permet pas de transmettre notre
-// propre paymentId/userId : la mise en relation avec le bon compte se fait a posteriori (voir
-// matchPendingPayment) via le webhook + une vérification serveur-à-serveur (jamais le webhook seul).
-const PLAN_LINKS = {
-  day: 'https://my.moneyfusion.net/6aaf50f00a9a5a976474e386',
-  week: 'https://my.moneyfusion.net/6aaf512e0a9a5a976474e478',
-};
-const PAYMENTS_ENABLED = !!(MONEYFUSION_API_URL && !MONEYFUSION_API_URL.startsWith('REPLACE_'))
-  && Object.values(PLAN_LINKS).every((u) => u && !u.startsWith('REPLACE_'));
+// Recharge de portefeuille via Money Fusion — lien de paiement unique, fourni par l'admin.
+// Le client paie sur ce lien (tous moyens acceptés par Money Fusion), puis envoie la capture
+// d'écran du paiement. Un admin vérifie la preuve et approuve manuellement le crédit du solde.
+const MONEY_FUSION_URL = 'https://my.moneyfusion.net/69baa0c5d64e43f8715d8bf8';
+const WALLET_CURRENCY = env('WALLET_CURRENCY', 'FCFA');
+const MIN_USABLE_BALANCE = 1000; // solde minimum pour pouvoir utiliser la plateforme (soumettre un signalement)
+const MIN_TOPUP_AMOUNT = 100; // montant minimum d'une demande de recharge
+const MAX_TOPUP_AMOUNT = 2000000; // garde-fou anti-erreur de saisie
+const MAX_PROOF_BASE64_LEN = 7_000_000; // ~5 Mo d'image en base64
 
 const missing = [];
 if (!TURSO_DATABASE_URL) missing.push('TURSO_DATABASE_URL');
@@ -68,12 +56,6 @@ if (ADMIN_PASSWORD.length < 12) {
   process.exit(1);
 }
 if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) console.warn('[BOOT] BREVO_API_KEY / BREVO_SENDER_EMAIL missing: emails will fail.');
-if (!PAYMENTS_ENABLED) console.warn('[BOOT] MONEYFUSION_API_URL or a PLAN_LINKS entry is missing/placeholder: payments disabled.');
-else {
-  for (const [k, u] of [['MONEYFUSION_API_URL', MONEYFUSION_API_URL], ...Object.entries(PLAN_LINKS)]) {
-    try { new URL(u); } catch { console.error(`[BOOT] ${k} is not a valid URL: "${u}"`); }
-  }
-}
 
 const { createClient } = require('@tursodatabase/serverless/compat');
 const db = createClient({ url: TURSO_DATABASE_URL, authToken: TURSO_AUTH_TOKEN });
@@ -84,13 +66,19 @@ const CODE_COOLDOWN_MS = 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_REPORTS_PER_DAY = 20;
-const PAYMENT_TTL_MS = 15 * 60 * 1000; // an unpaid payment attempt expires after 15 minutes
 const RECONCILE_MIN_GAP_MS = 8000;
 
-const PLANS = {
-  day: { key: 'day', label: '24 hours', price: 1000, durationMs: 24 * 60 * 60 * 1000, currency: CURRENCY_LABEL },
-  week: { key: 'week', label: '1 week', price: 2500, durationMs: 7 * 24 * 60 * 60 * 1000, currency: CURRENCY_LABEL },
-};
+// Pays où Money Fusion permet d'envoyer de l'argent (agrégateur ivoirien SC Digital) :
+// Côte d'Ivoire, Sénégal, Mali, Togo, Burkina Faso, Bénin — via Orange Money, MTN MoMo, Moov Money,
+// Wave selon le pays, ainsi que carte bancaire. Affiché côté client pour information.
+const MONEY_FUSION_COUNTRIES = [
+  { code: 'CI', label: "Côte d'Ivoire" },
+  { code: 'SN', label: 'Sénégal' },
+  { code: 'ML', label: 'Mali' },
+  { code: 'TG', label: 'Togo' },
+  { code: 'BF', label: 'Burkina Faso' },
+  { code: 'BJ', label: 'Bénin' },
+];
 
 const WHATSAPP_EMAILS = [
   'support@support.whatsapp.com',
@@ -140,32 +128,19 @@ async function initDb() {
     verification_code TEXT,
     verification_expires INTEGER,
     verification_attempts INTEGER NOT NULL DEFAULT 0,
+    balance INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
   )`);
   await ensureColumn('users', 'verified', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('users', 'verification_code', 'TEXT');
   await ensureColumn('users', 'verification_expires', 'INTEGER');
   await ensureColumn('users', 'verification_attempts', 'INTEGER NOT NULL DEFAULT 0');
-  // is_free = compte à accès illimité et gratuit (aucun paiement requis, aucune limite de quota).
-  // Sert notamment à donner à l'admin un accès "utilisateur" complet en plus du tableau /admin.
-  await ensureColumn('users', 'is_free', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn('users', 'balance', 'INTEGER NOT NULL DEFAULT 0');
 
   await db.execute(`CREATE TABLE IF NOT EXISTS auth_tokens (
     token TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL
-  )`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    user_id INTEGER,
-    plan TEXT NOT NULL,
-    price INTEGER NOT NULL,
-    payer_name TEXT,
-    payer_phone TEXT,
-    transaction_ref TEXT,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL
   )`);
   await db.execute(`CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,39 +153,23 @@ async function initDb() {
     created_at INTEGER NOT NULL,
     email_status TEXT
   )`);
-  // Automated payments: one row per attempt. Access is only ever created from a row that the
-  // server itself moved to 'paid' after the provider confirmed the transaction.
-  await db.execute(`CREATE TABLE IF NOT EXISTS payments (
+  // Recharges de portefeuille (Money Fusion) : le client déclare un montant et joint la capture
+  // d'écran du paiement (image encodée en base64, stockée telle quelle). Un admin approuve ou
+  // rejette ; seule une approbation crédite le solde (voir /admin/topups/decision).
+  await db.execute(`CREATE TABLE IF NOT EXISTS topups (
     id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    plan TEXT NOT NULL,
     amount INTEGER NOT NULL,
     currency TEXT NOT NULL,
-    method TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    provider_ref TEXT,
-    phone_hint TEXT,
+    proof_data TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    operator TEXT,
-    operator_ref TEXT,
+    admin_note TEXT,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    paid_at INTEGER,
-    expires_at INTEGER,
-    last_check INTEGER NOT NULL DEFAULT 0
+    decided_at INTEGER
   )`);
 
   await ensureColumn('auth_tokens', 'user_id', 'INTEGER');
   await ensureColumn('auth_tokens', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
-  await ensureColumn('sessions', 'user_id', 'INTEGER');
-  await ensureColumn('sessions', 'plan', 'TEXT');
-  await ensureColumn('sessions', 'price', 'INTEGER');
-  await ensureColumn('sessions', 'payer_name', 'TEXT');
-  await ensureColumn('sessions', 'payer_phone', 'TEXT');
-  await ensureColumn('sessions', 'transaction_ref', 'TEXT');
-  await ensureColumn('sessions', 'status', "TEXT NOT NULL DEFAULT 'active'");
-  await ensureColumn('sessions', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
-  await ensureColumn('sessions', 'expires_at', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('reports', 'user_id', 'INTEGER');
   await ensureColumn('reports', 'case_id', 'TEXT');
   await ensureColumn('reports', 'category', 'TEXT');
@@ -221,37 +180,14 @@ async function initDb() {
   await ensureColumn('reports', 'email_status', 'TEXT');
 
   for (const sql of [
-    `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at)`,
-    `CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id, status)`,
-    `CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status, created_at)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_provider_ref ON payments(provider_ref)`,
+    `CREATE INDEX IF NOT EXISTS idx_topups_user ON topups(user_id, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_topups_status ON topups(status, created_at)`,
   ]) {
     try { await db.execute(sql); } catch (e) { console.warn('[DB] Index skipped:', e.message); }
   }
   await db.execute({ sql: `DELETE FROM auth_tokens WHERE created_at < ?`, args: [Date.now() - TOKEN_TTL_MS] });
   console.log('[DB] Tables ready.');
-}
-
-// Crée (ou met à niveau) un compte utilisateur "normal" pour l'admin, avec accès gratuit illimité,
-// afin qu'il puisse aussi se connecter côté app (pas seulement sur /admin) et tout utiliser sans payer.
-async function ensureAdminUserAccount() {
-  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) return;
-  const email = ADMIN_EMAIL.trim().toLowerCase();
-  const r = await db.execute({ sql: `SELECT id FROM users WHERE email = ?`, args: [email] });
-  const passwordHash = await hashPassword(ADMIN_PASSWORD);
-  if (r.rows[0]) {
-    await db.execute({
-      sql: `UPDATE users SET password_hash = ?, verified = 1, is_free = 1 WHERE id = ?`,
-      args: [passwordHash, r.rows[0].id],
-    });
-  } else {
-    await db.execute({
-      sql: `INSERT INTO users (email, password_hash, verified, is_free, created_at) VALUES (?, ?, 1, 1, ?)`,
-      args: [email, passwordHash, Date.now()],
-    });
-  }
-  console.log(`[DB] Admin app-account ready (${email}), free access enabled.`);
 }
 
 /* ================================ HELPERS ================================== */
@@ -300,7 +236,6 @@ const limitVerify = rateLimit({ windowMs: 15 * MIN, max: 20 });
 const limitResend = rateLimit({ windowMs: 15 * MIN, max: 5 });
 const limitPayStart = rateLimit({ windowMs: 60 * MIN, max: 12 });
 const limitPayStatus = rateLimit({ windowMs: 15 * MIN, max: 400 });
-const limitWebhook = rateLimit({ windowMs: 15 * MIN, max: 300 });
 const limitReport = rateLimit({ windowMs: 60 * MIN, max: 20 });
 const limitAdmin = rateLimit({ windowMs: 15 * MIN, max: 120 });
 
@@ -344,19 +279,12 @@ async function getUserFromToken(req) {
   const token = req.header('X-User-Token') || '';
   if (!token || token.length > 200) return null;
   const r = await db.execute({
-    sql: `SELECT u.id, u.email, u.verified, u.created_at, u.is_free
+    sql: `SELECT u.id, u.email, u.verified, u.created_at
           FROM auth_tokens t JOIN users u ON u.id = t.user_id
           WHERE t.token = ? AND t.created_at > ?`,
     args: [sha256(token), Date.now() - TOKEN_TTL_MS],
   });
   return (r.rows && r.rows[0]) || null;
-}
-// Accès "illimité" pour les comptes is_free = 1 : pas de ligne sessions, pas de paiement,
-// pas de limite quotidienne de signalements. Renvoie la même forme que getActiveSession().
-const FREE_PLAN_EXPIRES = Date.now() + 100 * 365 * 24 * 60 * 60 * 1000; // ~100 ans = "illimité"
-async function getAccessForUser(user) {
-  if (user && Number(user.is_free)) return { token: 'free', plan: 'free', expires_at: FREE_PLAN_EXPIRES };
-  return getActiveSession(user.id);
 }
 async function issueToken(userId) {
   const token = crypto.randomBytes(24).toString('hex');
@@ -366,14 +294,9 @@ async function issueToken(userId) {
   });
   return token;
 }
-async function getActiveSession(userId) {
-  const r = await db.execute({
-    sql: `SELECT token, plan, expires_at FROM sessions
-          WHERE user_id = ? AND status = 'active' AND expires_at > ?
-          ORDER BY expires_at DESC LIMIT 1`,
-    args: [userId, Date.now()],
-  });
-  return (r.rows && r.rows[0]) || null;
+async function getBalance(userId) {
+  const r = await db.execute({ sql: `SELECT balance FROM users WHERE id = ?`, args: [userId] });
+  return Number((r.rows && r.rows[0] && r.rows[0].balance) || 0);
 }
 
 /* ================================== MAIL =================================== */
@@ -416,226 +339,38 @@ async function sendWhatsAppReport({ caseId, category, severity, waNumber, messag
   body += `Merci d'examiner ce compte pour violation des conditions d'utilisation WhatsApp.\n`;
   return mailer.sendMail({ to: destination, subject, text: body });
 }
-async function sendAccessActivatedEmail(email, planLabel, expiresAt) {
+async function sendTopupDecisionEmail(email, topup, decision, newBalance) {
   try {
-    await mailer.sendMail({
-      to: email,
-      subject: 'Takamura Elite — Your access is active',
-      text: `Your payment was confirmed.\n\nPlan: ${planLabel}\nExpires: ${new Date(expiresAt).toLocaleString('en-GB', { timeZone: 'Africa/Douala' })} (Douala)\n\n— Takamura Elite`,
-    });
-  } catch (e) { console.error('[MAIL activation]', e.message); }
+    const subject = decision === 'approved'
+      ? `Takamura Elite — Recharge de ${money(topup.amount)} ${WALLET_CURRENCY} approuvée`
+      : `Takamura Elite — Recharge de ${money(topup.amount)} ${WALLET_CURRENCY} refusée`;
+    const text = decision === 'approved'
+      ? `Votre recharge a été vérifiée et approuvée par un administrateur.\n\nMontant crédité : ${money(topup.amount)} ${WALLET_CURRENCY}\nNouveau solde : ${money(newBalance)} ${WALLET_CURRENCY}\n\n— Takamura Elite`
+      : `Votre demande de recharge de ${money(topup.amount)} ${WALLET_CURRENCY} n'a pas pu être validée (preuve de paiement introuvable ou incorrecte). Vous pouvez soumettre une nouvelle demande avec une capture d'écran valide.\n\n— Takamura Elite`;
+    await mailer.sendMail({ to: email, subject, text });
+  } catch (e) { console.error('[MAIL topup]', e.message); }
 }
-async function sendAdminPaymentNotice(email, plan, amount, method) {
+async function sendAdminTopupNotice(email, amount) {
   if (!ADMIN_EMAIL) return;
   try {
     await mailer.sendMail({
       to: ADMIN_EMAIL,
-      subject: `[Takamura] Payment confirmed — ${plan.label} (${amount} ${plan.currency})`,
-      text: `Payment confirmed by provider.\n\nAccount: ${email}\nPlan: ${plan.label}\nAmount: ${amount} ${plan.currency}\nMethod: ${method}\n`,
+      subject: `[Takamura] Nouvelle demande de recharge — ${money(amount)} ${WALLET_CURRENCY}`,
+      text: `Compte : ${email}\nMontant déclaré : ${money(amount)} ${WALLET_CURRENCY}\n\nÀ vérifier et approuver dans /admin (onglet Recharges).`,
     });
-  } catch (e) { console.error('[MAIL admin]', e.message); }
+  } catch (e) { console.error('[MAIL admin topup]', e.message); }
 }
 
-/* ============================ PAYMENT PROVIDER ============================= */
-// Money Fusion flow (server side only — the browser never talks to the provider's API directly,
-// it is only ever redirected to the hosted checkout page returned by makePayment()):
-//   fp.makePayment()        -> { statut, token, message, url }         (url = hosted checkout page)
-//   fp.checkPaymentStatus() -> { statut, data: { tokenPay, Montant, frais, statut: paid|pending|failed|no paid,
-//                                                personal_Info: [...], moyen, numeroTransaction, ... } }
-//   Webhook: Money Fusion POSTs the same "data" shape to webhook_url. Money Fusion does not publicly
-//            document a webhook signature scheme, so — exactly like the payment engine this replaces —
-//            the webhook body is ONLY used to know which payment to re-check. The real confirmation always
-//            comes from calling checkPaymentStatus() ourselves with our own API URL (see reconcile()/applyProviderTx()).
-//   personal_Info is how we associate the transaction with our own user_id/payment_id (see /api/payment/start).
-const provider = {
-  async collect({ amount, phone, planLabel, personalInfo }) {
-    const fp = new FusionPay(MONEYFUSION_API_URL);
-    fp.totalPrice(amount)
-      .addArticle(planLabel, amount)
-      .clientName('Takamura Elite')
-      .clientNumber(phone)
-      .addInfo(personalInfo)
-      .returnUrl(`${PUBLIC_BASE_URL}/`)
-      .webhookUrl(`${PUBLIC_BASE_URL}/api/payment/moneyfusion/webhook`);
-    const r = await fp.makePayment();
-    if (!r || r.statut !== true || !r.token || !r.url) throw new Error(`Money Fusion: unexpected response (${r && r.message})`);
-    return { token: String(r.token), url: String(r.url) };
-  },
-  async getTransaction(token) {
-    const fp = new FusionPay(MONEYFUSION_API_URL);
-    const r = await fp.checkPaymentStatus(token);
-    if (!r || r.statut !== true || !r.data) return {};
-    const d = r.data;
-    return {
-      status: String(d.statut || '').toLowerCase(), // 'paid' | 'pending' | 'failed' | 'no paid'
-      token: d.tokenPay,
-      amount: Number(d.Montant),
-      fees: Number(d.frais || 0),
-      moyen: d.moyen,
-      numeroTransaction: d.numeroTransaction,
-      personalInfo: Array.isArray(d.personal_Info) ? d.personal_Info[0] : (d.personal_Info || null),
-      // Présents pour les paiements via "Lien de paiement" (pas d'API/personal_Info) : servent au
-      // rapprochement par numéro/nom dans matchPendingPayment(). Noms de champs non documentés
-      // publiquement par Money Fusion — on prend toutes les variantes plausibles.
-      numeroSend: d.numeroSend || d.numero || d.phone || '',
-      nomclient: d.nomclient || d.nom || d.name || '',
-      email: d.email || d.mail || '',
-    };
-  },
-};
-
-/* ============================ PAYMENT DOMAIN LOGIC ========================= */
-const getPayment = async (id) => {
-  const r = await db.execute({ sql: `SELECT * FROM payments WHERE id = ?`, args: [id] });
+/* ============================== WALLET / TOPUPS ============================= */
+const getTopup = async (id) => {
+  const r = await db.execute({ sql: `SELECT * FROM topups WHERE id = ?`, args: [id] });
   return (r.rows && r.rows[0]) || null;
 };
-function publicPayment(p) {
+function publicTopup(t) {
   return {
-    id: p.id, status: p.status, plan: p.plan, amount: Number(p.amount),
-    method: p.method, createdAt: Number(p.created_at),
-    expiresAt: p.status === 'paid' ? Number(p.expires_at) : null,
+    id: t.id, status: t.status, amount: Number(t.amount), currency: t.currency,
+    createdAt: Number(t.created_at), decidedAt: t.decided_at ? Number(t.decided_at) : null,
   };
-}
-
-// Creates the access row for a payment the SERVER has marked paid. INSERT OR IGNORE on a
-// deterministic token makes it idempotent: the same payment can never create two sessions.
-async function ensureSession(paymentId) {
-  const p = await getPayment(paymentId);
-  if (!p || p.status !== 'paid' || !p.expires_at) return;
-  await db.execute({
-    sql: `INSERT OR IGNORE INTO sessions
-          (token, user_id, plan, price, payer_name, payer_phone, transaction_ref, status, created_at, expires_at)
-          VALUES (?, ?, ?, ?, '', ?, ?, 'active', ?, ?)`,
-    args: [`pay_${p.id}`, p.user_id, p.plan, p.amount, p.phone_hint || '', p.provider_ref || '', p.paid_at, p.expires_at],
-  });
-}
-async function repairPaidSessions(userId) {
-  const r = await db.execute({
-    sql: `SELECT p.id FROM payments p
-          WHERE p.user_id = ? AND p.status = 'paid' AND p.expires_at > ?
-            AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.token = 'pay_' || p.id)`,
-    args: [userId, Date.now()],
-  });
-  for (const row of r.rows || []) await ensureSession(row.id);
-}
-
-async function activatePayment(p, tx) {
-  const plan = PLANS[p.plan];
-  if (!plan) return p;
-  const now = Date.now();
-  const active = await getActiveSession(p.user_id);
-  const base = Math.max(now, active ? Number(active.expires_at) : 0); // renewing while active stacks time
-  const expiresAt = base + plan.durationMs;
-  // Compare-and-set: only the first confirmation flips the row; every replay affects 0 rows.
-  const r = await db.execute({
-    sql: `UPDATE payments SET status = 'paid', paid_at = ?, expires_at = ?, operator = ?, operator_ref = ?, updated_at = ?
-          WHERE id = ? AND status != 'paid'`,
-    args: [now, expiresAt, cleanLine(tx.operator, 20), cleanLine(tx.operator_reference, 60), now, p.id],
-  });
-  const first = rowsAffected(r) === 1;
-  await ensureSession(p.id);
-  if (first) {
-    const u = await db.execute({ sql: `SELECT email FROM users WHERE id = ?`, args: [p.user_id] });
-    const email = u.rows[0] && u.rows[0].email;
-    if (email) {
-      sendAccessActivatedEmail(email, plan.label, expiresAt).catch(() => {});
-      sendAdminPaymentNotice(email, plan, p.amount, p.method).catch(() => {});
-    }
-  }
-  return getPayment(p.id);
-}
-
-// The only place a provider answer changes a payment. Every field is checked against OUR record.
-async function applyProviderTx(p, tx) {
-  if (!tx || typeof tx !== 'object') return p;
-  const st = String(tx.status || '');
-  if (p.status === 'paid') return p;
-
-  if (st === 'paid') {
-    const okToken = String(tx.token || '') === String(p.provider_ref || '');
-    const pi = tx.personalInfo || {};
-    const okPaymentId = !pi.paymentId || String(pi.paymentId) === String(p.id);
-    // Money Fusion's "Montant" can be net of its own fees ("frais"), so accept either the raw
-    // amount or amount+fees matching what we asked for — but never anything less than our price.
-    const received = Number(tx.amount || 0);
-    const gross = received + Number(tx.fees || 0);
-    const okAmount = received === Number(p.amount) || gross === Number(p.amount);
-    if (!(okToken && okPaymentId && okAmount)) {
-      console.error(`[payment] MISMATCH on ${p.id}: token=${okToken} paymentId=${okPaymentId} amount=${okAmount} (Montant=${tx.amount} frais=${tx.fees} expected=${p.amount})`);
-      await db.execute({ sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ? AND status != 'paid'`, args: [Date.now(), p.id] });
-      return getPayment(p.id);
-    }
-    return activatePayment(p, { operator: tx.moyen, operator_reference: tx.numeroTransaction });
-  }
-  if (st === 'failed' || st === 'no paid') {
-    await db.execute({
-      sql: `UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('pending','processing','cancelled')`,
-      args: [Date.now(), p.id],
-    });
-    return getPayment(p.id);
-  }
-  if (['pending', 'processing'].includes(p.status) && Date.now() - Number(p.created_at) > PAYMENT_TTL_MS) {
-    await db.execute({ sql: `UPDATE payments SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('pending','processing')`, args: [Date.now(), p.id] });
-    return getPayment(p.id);
-  }
-  return p;
-}
-
-async function reconcile(p, { force = false } = {}) {
-  if (!PAYMENTS_ENABLED || !p.provider_ref || p.status === 'paid') return p;
-  if (!force && Date.now() - Number(p.last_check) < RECONCILE_MIN_GAP_MS) return p;
-  await db.execute({ sql: `UPDATE payments SET last_check = ? WHERE id = ?`, args: [Date.now(), p.id] });
-  let tx;
-  try { tx = await provider.getTransaction(p.provider_ref); } catch (e) { console.error('[payment reconcile]', e.message); return p; }
-  return applyProviderTx(p, tx);
-}
-
-async function sweepPayments() {
-  try {
-    await db.execute({
-      sql: `UPDATE payments SET status = 'expired', updated_at = ? WHERE status IN ('pending','processing') AND created_at < ?`,
-      args: [Date.now(), Date.now() - PAYMENT_TTL_MS],
-    });
-  } catch (e) { console.error('[sweep]', e.message); }
-}
-
-// Rapprochement pour les paiements initiés via un "Lien de paiement" fixe (pas de personal_Info) :
-// on cherche, parmi les paiements 'pending'/'processing' encore non réclamés (provider_ref NULL) et
-// dans la fenêtre PAYMENT_TTL_MS, celui dont le montant correspond ET dont les 3 derniers chiffres du
-// numéro saisi côté Money Fusion correspondent à ceux saisis sur notre site (phone_hint = "***678").
-// Si le résultat n'est pas unique et sans ambiguïté, on n'active RIEN — on log pour résolution manuelle
-// plutôt que de risquer de créditer le mauvais compte.
-async function matchPendingPayment(tx) {
-  const received = Number(tx.amount || 0);
-  const gross = received + Number(tx.fees || 0);
-  const cutoff = Date.now() - PAYMENT_TTL_MS;
-  const r = await db.execute({
-    sql: `SELECT * FROM payments WHERE provider_ref IS NULL AND status IN ('pending','processing')
-          AND created_at > ? AND (amount = ? OR amount = ?)
-          ORDER BY created_at DESC`,
-    args: [cutoff, received, gross],
-  });
-  let candidates = r.rows || [];
-  if (!candidates.length) {
-    console.warn(`[payment] No pending payment matches an incoming link payment (amount=${tx.amount}, numero=${tx.numeroSend || '—'}, token=${tx.token}). Check /admin manually.`);
-    return null;
-  }
-  const suffix = String(tx.numeroSend || '').replace(/\D/g, '').slice(-3);
-  if (suffix) {
-    const byPhone = candidates.filter((c) => String(c.phone_hint || '').slice(-3) === suffix);
-    if (byPhone.length) candidates = byPhone;
-  }
-  if (candidates.length !== 1) {
-    console.warn(`[payment] AMBIGUOUS match for incoming link payment (amount=${tx.amount}, numero=${tx.numeroSend || '—'}, token=${tx.token}): ${candidates.length} candidates. Check /admin manually.`);
-    return null;
-  }
-  // Réservation atomique : si deux webhooks arrivent en même temps, un seul gagne (provider_ref est UNIQUE).
-  const claim = await db.execute({
-    sql: `UPDATE payments SET provider_ref = ?, status = 'processing', updated_at = ? WHERE id = ? AND provider_ref IS NULL AND status IN ('pending','processing')`,
-    args: [tx.token, Date.now(), candidates[0].id],
-  });
-  if (!rowsAffected(claim)) return null; // déjà réclamé entre-temps
-  return getPayment(candidates[0].id);
 }
 
 /* ================================== APP ==================================== */
@@ -655,7 +390,12 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api')) res.set('Cache-Control', 'no-store');
   next();
 });
-app.use(express.json({ limit: '100kb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
+// La preuve de paiement (capture d'écran encodée en base64) ne transite que sur /api/topup/request,
+// qui a donc besoin d'une limite plus large ; toutes les autres routes gardent une limite stricte.
+app.use((req, res, next) => {
+  const limit = req.path === '/api/topup/request' ? '7mb' : '100kb';
+  express.json({ limit, verify: (r, _res, buf) => { r.rawBody = buf; } })(req, res, next);
+});
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 app.use('/api', limitGlobal);
 
@@ -676,9 +416,12 @@ app.get(['/', '/index.html'], (_req, res) => {
 
 app.get('/api/config', (_req, res) => {
   res.json({
-    plans: Object.values(PLANS).map((p) => ({ key: p.key, label: p.label, price: p.price, currency: p.currency })),
-    paymentsEnabled: PAYMENTS_ENABLED,
-    paymentTtlMinutes: Math.round(PAYMENT_TTL_MS / 60000),
+    moneyFusionUrl: MONEY_FUSION_URL,
+    currency: WALLET_CURRENCY,
+    minUsableBalance: MIN_USABLE_BALANCE,
+    minTopupAmount: MIN_TOPUP_AMOUNT,
+    maxTopupAmount: MAX_TOPUP_AMOUNT,
+    moneyFusionCountries: MONEY_FUSION_COUNTRIES,
     destinations: WHATSAPP_EMAILS.map((email) => ({ email, note: DEST_NOTES[email] || '' })),
     categories: CATEGORIES,
     severities: SEVERITIES,
@@ -797,25 +540,21 @@ app.get('/api/me', async (req, res) => {
   try {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated.' });
-    await repairPaidSessions(user.id);
-    const sess = await getAccessForUser(user);
+    const balance = await getBalance(user.id);
     const reports = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ?`, [user.id]);
-    let pendingPayment = null;
-    if (!sess) {
-      const r = await db.execute({
-        sql: `SELECT * FROM payments WHERE user_id = ? AND status IN ('pending','processing') AND created_at > ?
-              ORDER BY created_at DESC LIMIT 1`,
-        args: [user.id, Date.now() - PAYMENT_TTL_MS],
-      });
-      if (r.rows[0]) pendingPayment = publicPayment(r.rows[0]);
-    }
+    const r = await db.execute({
+      sql: `SELECT * FROM topups WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+      args: [user.id],
+    });
+    const pendingTopup = r.rows[0] ? publicTopup(r.rows[0]) : null;
     res.json({
-      user: { id: user.id, email: user.email, createdAt: Number(user.created_at), isFree: !!Number(user.is_free) },
-      hasAccess: !!sess,
-      pending: !!pendingPayment,
-      pendingPayment,
+      user: { id: user.id, email: user.email, createdAt: Number(user.created_at) },
+      balance,
+      hasAccess: balance >= MIN_USABLE_BALANCE,
+      minUsableBalance: MIN_USABLE_BALANCE,
+      pending: !!pendingTopup,
+      pendingTopup,
       reports,
-      access: sess ? { plan: sess.plan, expiresAt: Number(sess.expires_at) } : null,
     });
   } catch (e) {
     console.error('[me]', e.message);
@@ -823,105 +562,56 @@ app.get('/api/me', async (req, res) => {
   }
 });
 
-/* ---------------------------------- PAYMENT --------------------------------- */
-// Creates a REAL transaction at the provider. The client only chooses plan + phone;
-// price, currency and duration are decided here. Nothing the client sends can grant access.
-// personal_Info = { paymentId, userId } is how the eventual confirmation is tied back to this
-// exact user account (see applyProviderTx) — the user never types their own user_id anywhere.
-app.post('/api/payment/start', limitPayStart, async (req, res) => {
+/* ----------------------------------- WALLET ---------------------------------- */
+// L'utilisateur paie de lui-même sur le lien Money Fusion (montant libre), puis déclare le
+// montant payé et joint la capture d'écran. Rien n'est crédité automatiquement : seule une
+// approbation admin (voir /admin/topups/decision) crédite le solde. Une seule recharge en
+// attente à la fois par compte, pour garder la file d'admin lisible.
+app.post('/api/topup/request', limitPayStart, async (req, res) => {
   try {
     const user = await getUserFromToken(req);
-    if (!user) return res.status(401).json({ error: 'Please sign in first.' });
-    if (!user.verified) return res.status(403).json({ error: 'Account not verified.' });
-    if (Number(user.is_free)) return res.status(400).json({ error: 'This account already has free unlimited access.' });
-    if (!PAYMENTS_ENABLED) return res.status(503).json({ error: 'Payments are temporarily unavailable.' });
+    if (!user) return res.status(401).json({ error: 'Veuillez vous connecter.' });
+    if (!user.verified) return res.status(403).json({ error: 'Compte non vérifié.' });
 
-    const plan = Object.prototype.hasOwnProperty.call(PLANS, req.body?.plan) ? PLANS[req.body.plan] : null;
-    if (!plan) return res.status(400).json({ error: 'Unknown plan.' });
+    const amount = Math.round(Number(req.body?.amount));
+    if (!Number.isFinite(amount) || amount < MIN_TOPUP_AMOUNT || amount > MAX_TOPUP_AMOUNT) {
+      return res.status(400).json({ error: `Montant invalide (minimum ${money(MIN_TOPUP_AMOUNT)} ${WALLET_CURRENCY}).` });
+    }
+    const proof = String(req.body?.proofBase64 || '');
+    if (!proof || proof.length > MAX_PROOF_BASE64_LEN) return res.status(400).json({ error: 'Capture de paiement manquante ou trop volumineuse (5 Mo max).' });
+    if (!/^data:image\/(png|jpe?g|webp);base64,[a-zA-Z0-9+/=]+$/.test(proof)) {
+      return res.status(400).json({ error: 'Format de capture invalide (PNG, JPG ou WEBP uniquement).' });
+    }
 
-    let phone = String(req.body?.phone || '').replace(/[\s().-]/g, '');
-    phone = phone.replace(/^\+?237/, '');
-    if (!/^6\d{8}$/.test(phone)) return res.status(400).json({ error: 'Enter a valid 9-digit Cameroon mobile number.' });
-
-    // A new attempt supersedes older open ones (the provider stays the source of truth if the old one is paid).
-    await db.execute({
-      sql: `UPDATE payments SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND status IN ('pending','processing')`,
-      args: [Date.now(), user.id],
-    });
+    const existing = await countRows(`SELECT COUNT(*) AS c FROM topups WHERE user_id = ? AND status = 'pending'`, [user.id]);
+    if (existing > 0) return res.status(409).json({ error: 'Vous avez déjà une recharge en attente de vérification.' });
 
     const id = crypto.randomUUID();
     const now = Date.now();
     await db.execute({
-      sql: `INSERT INTO payments (id, user_id, plan, amount, currency, method, provider, phone_hint, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'moneyfusion-link', 'moneyfusion', ?, 'pending', ?, ?)`,
-      args: [id, user.id, plan.key, plan.price, plan.currency, `***${phone.slice(-3)}`, now, now],
+      sql: `INSERT INTO topups (id, user_id, amount, currency, proof_data, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      args: [id, user.id, amount, WALLET_CURRENCY, proof, now],
     });
-
-    // Lien de paiement fixe : pas d'appel serveur à Money Fusion ici, le client est redirigé
-    // directement sur la page hébergée. Le rapprochement avec ce paiement se fait plus tard,
-    // côté webhook, via matchPendingPayment() (montant + 3 derniers chiffres du numéro).
-    // On lui redemande donc le MÊME numéro whatsapp que celui utilisé ci-dessus sur Money Fusion.
-    res.json({ payment: publicPayment(await getPayment(id)), checkoutUrl: PLAN_LINKS[plan.key] });
+    sendAdminTopupNotice(user.email, amount).catch(() => {});
+    res.json({ topup: publicTopup(await getTopup(id)) });
   } catch (e) {
-    console.error('[payment/start]', e.message);
+    console.error('[topup/request]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
 
-// Reflects the state recorded by the server (updated by the webhook or by a server-side check with the provider).
-app.get('/api/payment/status/:id', limitPayStatus, async (req, res) => {
+app.get('/api/topup/mine', limitPayStatus, async (req, res) => {
   try {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated.' });
-    const id = String(req.params.id || '');
-    if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid payment.' });
-    let p = await getPayment(id);
-    if (!p || Number(p.user_id) !== Number(user.id)) return res.status(404).json({ error: 'Payment not found.' });
-    p = await reconcile(p);
-    if (p.status === 'paid') await ensureSession(p.id);
-    res.json(publicPayment(p));
+    const r = await db.execute({
+      sql: `SELECT id, amount, currency, status, created_at, decided_at FROM topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`,
+      args: [user.id],
+    });
+    res.json({ topups: r.rows.map(publicTopup) });
   } catch (e) {
-    console.error('[payment/status]', e.message);
+    console.error('[topup/mine]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
-  }
-});
-
-// Money Fusion webhook. Money Fusion does not publicly document a signature scheme for this payload,
-// so — like the reconciliation logic above — it is NEVER trusted for the decision on its own: it only
-// tells us which payment to re-check, and the transaction is then re-fetched from Money Fusion with our
-// own API URL (checkPaymentStatus) and compared to our record (token, personal_Info, amount) in
-// applyProviderTx(). Replays are harmless (compare-and-set in activatePayment).
-app.post('/api/payment/moneyfusion/webhook', limitWebhook, async (req, res) => {
-  try {
-    if (!PAYMENTS_ENABLED) return res.status(503).json({ error: 'Unavailable.' });
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const token = cleanLine(body.tokenPay || body.token, 80);
-    const piRaw = Array.isArray(body.personal_Info) ? body.personal_Info[0] : body.personal_Info;
-    const paymentId = cleanLine(piRaw && piRaw.paymentId, 60);
-    if (!token && !paymentId) return res.status(400).json({ error: 'Invalid payload.' });
-
-    let p = null;
-    if (UUID_RE.test(paymentId)) p = await getPayment(paymentId);
-    if (!p && token) {
-      const r = await db.execute({ sql: `SELECT * FROM payments WHERE provider_ref = ?`, args: [token] });
-      p = r.rows[0] || null;
-    }
-    if (!p && token) {
-      // Pas de correspondance directe : probablement un paiement via lien fixe (pas de personal_Info).
-      // On récupère la transaction authentique auprès de Money Fusion (jamais le webhook seul), puis
-      // on tente de la rapprocher d'un paiement en attente sur notre site.
-      let tx;
-      try { tx = await provider.getTransaction(token); } catch (e) { console.error('[webhook lookup]', e.message); return res.json({ ok: true }); }
-      if (tx && tx.status === 'paid') p = await matchPendingPayment(tx);
-      if (!p) return res.json({ ok: true }); // rien trouvé ou ambigu : voir logs [payment] ci-dessus
-    }
-    if (!p) return res.json({ ok: true }); // unknown to us: acknowledge, do nothing
-    if (token && p.provider_ref && token !== p.provider_ref) return res.json({ ok: true });
-    if (p.status !== 'paid') await reconcile(p, { force: true });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[webhook]', e.message);
-    res.status(500).json({ error: 'Error.' }); // provider may retry
   }
 });
 
@@ -936,9 +626,8 @@ app.post('/api/report', limitReport, async (req, res) => {
   try {
     const user = await getUserFromToken(req);
     if (!user) return res.status(401).json({ error: 'Not authenticated.' });
-    const isFree = !!Number(user.is_free);
-    const sess = await getAccessForUser(user);
-    if (!sess) return res.status(403).json({ error: 'No active access. Please purchase a plan.' });
+    const balance = await getBalance(user.id);
+    if (balance < MIN_USABLE_BALANCE) return res.status(403).json({ error: `Solde insuffisant. Rechargez au moins ${money(MIN_USABLE_BALANCE)} ${WALLET_CURRENCY} pour utiliser la plateforme.` });
 
     const category = String(req.body?.category || '');
     const severity = String(req.body?.severity || 'Modérée');
@@ -949,10 +638,8 @@ app.post('/api/report', limitReport, async (req, res) => {
     if (!SEVERITIES.includes(severity)) return res.status(400).json({ error: 'Invalid severity.' });
     if (!WA_TARGET_RE.test(waNumber)) return res.status(400).json({ error: 'Invalid WhatsApp number or link.' });
 
-    if (!isFree) {
-      const sentToday = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ? AND created_at > ?`, [user.id, Date.now() - 24 * 60 * 60 * 1000]);
-      if (sentToday >= MAX_REPORTS_PER_DAY) return res.status(429).json({ error: 'Daily report limit reached.' });
-    }
+    const sentToday = await countRows(`SELECT COUNT(*) AS c FROM reports WHERE user_id = ? AND created_at > ?`, [user.id, Date.now() - 24 * 60 * 60 * 1000]);
+    if (sentToday >= MAX_REPORTS_PER_DAY) return res.status(429).json({ error: 'Daily report limit reached.' });
 
     const requested = Array.isArray(req.body?.destinations) ? req.body.destinations : [];
     const dests = requested.length ? [...new Set(requested.filter((d) => WHATSAPP_EMAILS.includes(d)))] : WHATSAPP_EMAILS;
@@ -1021,29 +708,28 @@ const money = (n) => Number(n || 0).toLocaleString('en-US');
 
 app.get('/admin', limitAdmin, adminAuth, async (_req, res) => {
   try {
-    const now = Date.now();
-    const [u, pay, legacy, r, stats] = await Promise.all([
-      db.execute(`SELECT id, email, verified, is_free, created_at FROM users ORDER BY created_at DESC LIMIT 200`),
-      db.execute(`SELECT p.id, p.plan, p.amount, p.currency, p.method, p.provider_ref, p.status, p.created_at, p.paid_at, u.email
-                  FROM payments p LEFT JOIN users u ON u.id = p.user_id ORDER BY p.created_at DESC LIMIT 200`),
-      db.execute(`SELECT s.token, s.plan, s.price, s.payer_name, s.payer_phone, s.transaction_ref, s.created_at, u.email
-                  FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.status = 'pending' ORDER BY s.created_at DESC LIMIT 100`),
+    const [u, pending, decided, r, stats] = await Promise.all([
+      db.execute(`SELECT id, email, verified, balance, created_at FROM users ORDER BY created_at DESC LIMIT 200`),
+      db.execute(`SELECT t.id, t.amount, t.currency, t.proof_data, t.created_at, u.email
+                  FROM topups t LEFT JOIN users u ON u.id = t.user_id WHERE t.status = 'pending' ORDER BY t.created_at ASC LIMIT 100`),
+      db.execute(`SELECT t.id, t.amount, t.currency, t.status, t.created_at, t.decided_at, u.email
+                  FROM topups t LEFT JOIN users u ON u.id = t.user_id WHERE t.status != 'pending' ORDER BY t.decided_at DESC LIMIT 150`),
       db.execute(`SELECT r.case_id, r.category, r.severity, r.wa_number, r.message, r.created_at, r.email_status, u.email
                   FROM reports r LEFT JOIN users u ON u.id = r.user_id ORDER BY r.created_at DESC LIMIT 200`),
       Promise.all([
         countRows(`SELECT COUNT(*) AS c FROM users`, []),
-        countRows(`SELECT COUNT(DISTINCT user_id) AS c FROM sessions WHERE status = 'active' AND expires_at > ?`, [now]),
-        countRows(`SELECT COUNT(*) AS c FROM payments WHERE status IN ('pending','processing')`, []),
+        countRows(`SELECT COUNT(*) AS c FROM users WHERE balance >= ?`, [MIN_USABLE_BALANCE]),
+        countRows(`SELECT COUNT(*) AS c FROM topups WHERE status = 'pending'`, []),
         countRows(`SELECT COUNT(*) AS c FROM reports`, []),
-        db.execute(`SELECT COALESCE(SUM(amount),0) AS c FROM payments WHERE status = 'paid'`).then((x) => Number(x.rows[0].c || 0)),
+        db.execute(`SELECT COALESCE(SUM(amount),0) AS c FROM topups WHERE status = 'approved'`).then((x) => Number(x.rows[0].c || 0)),
       ]),
     ]);
-    const [totalUsers, activeSubs, pendingPay, totalReports, revenue] = stats;
+    const [totalUsers, activeWallets, pendingTopups, totalReports, totalCredited] = stats;
 
     const nonce = crypto.randomBytes(16).toString('base64');
     res.set({
       'Content-Security-Policy':
-        `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
       'Cache-Control': 'no-store',
     });
 
@@ -1064,38 +750,44 @@ nav button[aria-selected=true]{background:var(--s2);color:var(--tx)}nav button:f
 table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--bd);vertical-align:top;white-space:nowrap}
 td.wrap{white-space:normal;min-width:220px;max-width:380px}th{color:var(--mu);font-weight:500;font-size:11px;letter-spacing:.12em;text-transform:uppercase;background:var(--s2)}tr:last-child td{border-bottom:0}
 .b{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;border:1px solid var(--bd);color:var(--mu)}
-.b-paid,.b-sent,.b-active{color:var(--ok);border-color:rgba(111,191,142,.35)}.b-failed,.b-cancelled,.b-expired{color:var(--er);border-color:rgba(217,115,107,.35)}.b-pending,.b-processing{color:var(--ac);border-color:rgba(201,166,107,.35)}
+.b-paid,.b-sent,.b-active,.b-approved{color:var(--ok);border-color:rgba(111,191,142,.35)}.b-failed,.b-cancelled,.b-expired,.b-rejected{color:var(--er);border-color:rgba(217,115,107,.35)}.b-pending,.b-processing{color:var(--ac);border-color:rgba(201,166,107,.35)}
 .act{font:inherit;font-size:12px;padding:5px 11px;border-radius:7px;border:1px solid var(--bd);background:var(--s2);color:var(--tx);cursor:pointer;margin-right:4px}.act:hover{border-color:var(--ac)}.act.no{color:var(--er)}.act:disabled{opacity:.5;cursor:wait}
 h2{font-size:15px;margin:26px 0 10px;font-weight:600}p.note{color:var(--mu);margin:0 0 10px;font-size:13px}.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
 section[hidden]{display:none}
+.topcard{background:var(--s);border:1px solid var(--bd);border-radius:12px;padding:14px 16px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.topcard img{width:150px;max-height:220px;object-fit:contain;border-radius:8px;border:1px solid var(--bd);background:#000;cursor:zoom-in}
+.topcard .meta{flex:1;min-width:180px}
+.topcard .meta b{font-size:16px}
 </style>
 <header><h1>TAKAMURA ELITE · ADMIN</h1>
 <nav role="tablist" aria-label="Sections">
 <button role="tab" aria-selected="true" data-tab="overview">Overview</button><button role="tab" aria-selected="false" data-tab="users">Users</button>
-<button role="tab" aria-selected="false" data-tab="payments">Payments</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button></nav></header>
+<button role="tab" aria-selected="false" data-tab="topups">Recharges${pendingTopups ? ` (${pendingTopups})` : ''}</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button></nav></header>
 
 <section id="t-overview">
 <div class="grid">
 <div class="card"><small>Total users</small><strong>${totalUsers}</strong></div>
-<div class="card"><small>Active subscriptions</small><strong>${activeSubs}</strong></div>
-<div class="card"><small>Pending payments</small><strong>${pendingPay}</strong></div>
+<div class="card"><small>Active wallets (≥ ${money(MIN_USABLE_BALANCE)})</small><strong>${activeWallets}</strong></div>
+<div class="card"><small>Pending topups</small><strong>${pendingTopups}</strong></div>
 <div class="card"><small>Reports</small><strong>${totalReports}</strong></div>
-<div class="card"><small>Confirmed revenue</small><strong>${money(revenue)} <span style="font-size:13px;color:var(--mu)">${esc(CURRENCY_LABEL)}</span></strong></div>
+<div class="card"><small>Total credited</small><strong>${money(totalCredited)} <span style="font-size:13px;color:var(--mu)">${esc(WALLET_CURRENCY)}</span></strong></div>
 </div>
-<p class="note">Payments are confirmed automatically by the provider (webhook + server-side verification). ${PAYMENTS_ENABLED ? '' : '<strong style="color:var(--er)">MONEYFUSION_API_URL is not set: payments are disabled.</strong>'}</p>
+<p class="note">Recharges are 100% manual: the user pays on the Money Fusion link, uploads a screenshot, and an admin reviews it here before the balance is credited. Money Fusion payment link: <span class="mono">${esc(MONEY_FUSION_URL)}</span></p>
 </section>
 
-<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Free access</th><th>Created</th><th></th></tr>
-${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${Number(x.is_free) ? badge('active') : '—'}</td><td>${esc(fmtDate(x.created_at))}</td><td><button class="act" data-toggle-free="${esc(x.id)}" data-free-state="${Number(x.is_free) ? 1 : 0}">${Number(x.is_free) ? 'Revoke free access' : 'Grant free access'}</button><button class="act" data-reset-user="${esc(x.id)}">Reset password</button><button class="act no" data-delete-user="${esc(x.id)}">Delete</button></td></tr>`).join('')}</table></div></section>
+<section id="t-users" hidden><div class="scroll"><table><tr><th>ID</th><th>Email</th><th>Verified</th><th>Balance</th><th>Created</th><th></th></tr>
+${u.rows.map((x) => `<tr><td>${esc(x.id)}</td><td>${esc(x.email)}</td><td>${x.verified ? badge('active') : badge('pending')}</td><td>${esc(money(x.balance))} ${esc(WALLET_CURRENCY)}</td><td>${esc(fmtDate(x.created_at))}</td><td><button class="act" data-reset-user="${esc(x.id)}">Reset password</button><button class="act no" data-delete-user="${esc(x.id)}">Delete</button></td></tr>`).join('')}</table></div></section>
 
-<section id="t-payments" hidden>
-<div class="scroll"><table><tr><th>User</th><th>Plan</th><th>Amount</th><th>Method</th><th>Transaction</th><th>Status</th><th>Date</th><th></th></tr>
-${pay.rows.map((x) => `<tr><td>${esc(x.email)}</td><td>${esc(x.plan)}</td><td>${esc(money(x.amount))} ${esc(x.currency)}</td><td>${esc(x.method)}</td><td class="mono">${esc(x.provider_ref || '—')}</td><td>${badge(x.status)}</td><td>${esc(fmtDate(x.paid_at || x.created_at))}</td><td>${
-      x.status !== 'paid' && x.provider_ref ? `<button class="act" data-recheck="${esc(x.id)}">Re-check</button>` : ''}</td></tr>`).join('')}</table></div>
-<h2>Legacy manual requests (${legacy.rows.length})</h2>
-<p class="note">Old manual-declaration requests only. Kept as an exceptional support tool; new payments never appear here.</p>
-<div class="scroll"><table><tr><th>Created</th><th>User</th><th>Plan</th><th>Price</th><th>Name</th><th>Phone</th><th>Ref</th><th></th></tr>
-${legacy.rows.map((x) => `<tr><td>${esc(fmtDate(x.created_at))}</td><td>${esc(x.email)}</td><td>${esc(x.plan)}</td><td>${esc(x.price)}</td><td>${esc(x.payer_name)}</td><td>${esc(x.payer_phone)}</td><td>${esc(x.transaction_ref)}</td><td><button class="act" data-action="activate" data-token="${esc(x.token)}">Approve</button><button class="act no" data-action="reject" data-token="${esc(x.token)}">Reject</button></td></tr>`).join('')}</table></div>
+<section id="t-topups" hidden>
+<h2>Pending review (${pending.rows.length})</h2>
+${pending.rows.length ? pending.rows.map((x) => `<div class="topcard">
+  <img src="${esc(x.proof_data)}" alt="Payment proof" loading="lazy" onclick="window.open(this.src,'_blank')">
+  <div class="meta"><b>${esc(money(x.amount))} ${esc(x.currency)}</b><br>${esc(x.email)}<br><span class="mono" style="color:var(--mu)">${esc(fmtDate(x.created_at))}</span>
+  <div style="margin-top:10px"><button class="act" data-topup-decide="${esc(x.id)}" data-action="approve">Approve &amp; credit</button><button class="act no" data-topup-decide="${esc(x.id)}" data-action="reject">Reject</button></div></div>
+</div>`).join('') : '<p class="note">No pending recharge to review.</p>'}
+<h2>History (${decided.rows.length})</h2>
+<div class="scroll"><table><tr><th>Date</th><th>User</th><th>Amount</th><th>Status</th><th>Decided</th></tr>
+${decided.rows.map((x) => `<tr><td>${esc(fmtDate(x.created_at))}</td><td>${esc(x.email)}</td><td>${esc(money(x.amount))} ${esc(x.currency)}</td><td>${badge(x.status)}</td><td>${esc(fmtDate(x.decided_at))}</td></tr>`).join('')}</table></div>
 </section>
 
 <section id="t-reports" hidden><div class="scroll"><table><tr><th>Date</th><th>User</th><th>Case</th><th>Category</th><th>Severity</th><th>Target</th><th>Message</th><th>Emails</th></tr>
@@ -1103,23 +795,20 @@ ${r.rows.map((x) => `<tr><td>${esc(fmtDate(x.created_at))}</td><td>${esc(x.email
 
 <script nonce="${nonce}">
 const tabs=[...document.querySelectorAll('[data-tab]')];
-function show(n){tabs.forEach(t=>t.setAttribute('aria-selected',String(t.dataset.tab===n)));['overview','users','payments','reports'].forEach(k=>document.getElementById('t-'+k).hidden=k!==n);}
+function show(n){tabs.forEach(t=>t.setAttribute('aria-selected',String(t.dataset.tab===n)));['overview','users','topups','reports'].forEach(k=>document.getElementById('t-'+k).hidden=k!==n);}
 tabs.forEach(t=>t.addEventListener('click',()=>show(t.dataset.tab)));
 async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'takamura-admin'},body:JSON.stringify(body)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||'Error');return d;}
 document.addEventListener('click',async e=>{
   const b=e.target.closest('button.act');if(!b)return;
-  if(b.dataset.action==='reject'&&!confirm('Reject this request?'))return;
-  if(b.dataset.action==='activate'&&!confirm('Grant access manually? Use only for exceptional support cases.'))return;
-  if(b.dataset.deleteUser&&!confirm('Delete this user permanently? This cannot be undone. Their reports and payment history are kept for records but will no longer show a linked account.'))return;
+  if(b.dataset.action==='reject'&&b.dataset.topupDecide&&!confirm('Reject this recharge? Nothing will be credited.'))return;
+  if(b.dataset.action==='approve'&&b.dataset.topupDecide&&!confirm('Credit this amount to the user\\'s balance? Only do this after checking the screenshot.'))return;
+  if(b.dataset.deleteUser&&!confirm('Delete this user permanently? This cannot be undone. Their reports and recharge history are kept for records but will no longer show a linked account.'))return;
   if(b.dataset.resetUser&&!confirm('Generate a new temporary password for this user? Their current sessions will be signed out.'))return;
-  if(b.dataset.toggleFree&&!confirm(b.dataset.freeState==='1'?'Revoke free unlimited access for this user?':'Grant free unlimited access to this user? They will no longer need to pay.'))return;
   b.disabled=true;
   try{
-    if(b.dataset.recheck)await post('/admin/payments/recheck',{id:b.dataset.recheck});
+    if(b.dataset.topupDecide)await post('/admin/topups/decision',{id:b.dataset.topupDecide,action:b.dataset.action});
     else if(b.dataset.deleteUser){await post('/admin/users/delete',{id:b.dataset.deleteUser});location.reload();return;}
-    else if(b.dataset.toggleFree){await post('/admin/users/set-free',{id:b.dataset.toggleFree,isFree:b.dataset.freeState!=='1'});location.reload();return;}
     else if(b.dataset.resetUser){const d=await post('/admin/users/reset-password',{id:b.dataset.resetUser});alert((d.emailed?'Emailed to the user.\\n\\n':'Could not email the user — share this manually.\\n\\n')+'Temporary password: '+d.tempPassword);b.disabled=false;return;}
-    else await post('/admin/sessions/decision',{token:b.dataset.token,action:b.dataset.action});
     location.reload();
   }catch(err){alert(err.message);b.disabled=false;}
 });
@@ -1174,60 +863,31 @@ app.post('/admin/users/reset-password', limitAdmin, adminAuth, requireAdminXhr, 
   }
 });
 
-app.post('/admin/users/set-free', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
-  try {
-    const id = Number(req.body?.id);
-    const isFree = req.body?.isFree ? 1 : 0;
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid request.' });
-    const r = await db.execute({ sql: `UPDATE users SET is_free = ? WHERE id = ?`, args: [isFree, id] });
-    if (!rowsAffected(r)) return res.status(404).json({ error: 'User not found.' });
-    res.json({ ok: true, isFree: !!isFree });
-  } catch (e) {
-    console.error('[admin set-free]', e.message);
-    res.status(500).json({ error: 'Server error.' });
-  }
-});
-
-app.post('/admin/payments/recheck', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
+// La seule route qui peut créditer un solde. 'approve' n'a d'effet que sur une ligne encore
+// 'pending' (compare-and-set), donc un double-clic ou un rechargement de page ne peut jamais
+// créditer deux fois la même recharge.
+app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
   try {
     const id = String(req.body?.id || '');
-    if (!UUID_RE.test(id)) return res.status(400).json({ error: 'Invalid request.' });
-    const p = await getPayment(id);
-    if (!p) return res.status(404).json({ error: 'Payment not found.' });
-    const after = await reconcile(p, { force: true });
-    res.json({ ok: true, status: after.status });
-  } catch (e) {
-    console.error('[admin recheck]', e.message);
-    res.status(500).json({ error: 'Server error.' });
-  }
-});
-
-app.post('/admin/sessions/decision', limitAdmin, adminAuth, requireAdminXhr, async (req, res) => {
-  try {
-    const token = String(req.body?.token || '');
     const action = String(req.body?.action || '');
-    if (!token || !['activate', 'reject'].includes(action)) return res.status(400).json({ error: 'Invalid request.' });
-    const r = await db.execute({
-      sql: `SELECT s.token, s.plan, s.status, u.email FROM sessions s LEFT JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
-      args: [token],
-    });
-    const s = r.rows && r.rows[0];
-    if (!s) return res.status(404).json({ error: 'Session not found.' });
-    if (s.status !== 'pending') return res.status(409).json({ error: 'Already processed.' });
+    if (!UUID_RE.test(id) || !['approve', 'reject'].includes(action)) return res.status(400).json({ error: 'Invalid request.' });
+    const t = await getTopup(id);
+    if (!t) return res.status(404).json({ error: 'Recharge not found.' });
+    if (t.status !== 'pending') return res.status(409).json({ error: 'Already processed.' });
+
+    const now = Date.now();
     if (action === 'reject') {
-      await db.execute({ sql: `UPDATE sessions SET status = 'rejected' WHERE token = ? AND status = 'pending'`, args: [token] });
+      await db.execute({ sql: `UPDATE topups SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
+      const u = await db.execute({ sql: `SELECT email FROM users WHERE id = ?`, args: [t.user_id] });
+      if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'rejected', null).catch(() => {});
       return res.json({ ok: true });
     }
-    const plan = PLANS[s.plan];
-    if (!plan) return res.status(400).json({ error: 'Unknown plan.' });
-    const now = Date.now();
-    const expiresAt = now + plan.durationMs;
-    await db.execute({
-      sql: `UPDATE sessions SET status = 'active', created_at = ?, expires_at = ? WHERE token = ? AND status = 'pending'`,
-      args: [now, expiresAt, token],
-    });
-    if (s.email) sendAccessActivatedEmail(s.email, plan.label, expiresAt).catch(() => {});
-    res.json({ ok: true, expiresAt });
+    const r = await db.execute({ sql: `UPDATE topups SET status = 'approved', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
+    if (!rowsAffected(r)) return res.status(409).json({ error: 'Already processed.' });
+    await db.execute({ sql: `UPDATE users SET balance = balance + ? WHERE id = ?`, args: [Number(t.amount), t.user_id] });
+    const u = await db.execute({ sql: `SELECT email, balance FROM users WHERE id = ?`, args: [t.user_id] });
+    if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'approved', Number(u.rows[0].balance)).catch(() => {});
+    res.json({ ok: true, newBalance: u.rows[0] ? Number(u.rows[0].balance) : null });
   } catch (e) {
     console.error('[admin decision]', e.message);
     res.status(500).json({ error: 'Server error.' });
@@ -1247,10 +907,7 @@ app.use((err, _req, res, _next) => {
 /* ================================== BOOT =================================== */
 (async () => {
   await initDb();
-  await ensureAdminUserAccount();
-  await sweepPayments();
-  setInterval(sweepPayments, 60 * 1000).unref();
-  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (payments ${PAYMENTS_ENABLED ? 'ENABLED' : 'DISABLED'})`));
+  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review)`));
 })().catch((e) => {
   console.error('[BOOT] Startup failed:', e && e.message);
   process.exit(1);

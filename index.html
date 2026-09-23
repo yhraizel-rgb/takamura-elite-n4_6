@@ -341,7 +341,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       <h2>Three steps, one traceable case.</h2>
       <div class="steps3">
         <div class="card"><b>01</b><h3>Create &amp; verify</h3><p>Register with your email and confirm it with a 6-digit code.</p></div>
-        <div class="card"><b>02</b><h3>Activate access</h3><p>Choose 24 hours or 1 week and pay securely with Money Fusion. Access activates automatically once the payment is confirmed.</p></div>
+        <div class="card"><b>02</b><h3>Top up your wallet</h3><p>Pay any amount on our Money Fusion link, then upload your payment screenshot. An admin reviews it and credits your balance.</p></div>
         <div class="card"><b>03</b><h3>Submit a report</h3><p>Describe the account and evidence in a guided form. You receive a case ID and keep a history.</p></div>
       </div>
     </section>
@@ -400,7 +400,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 <div id="v-checkout" class="view center" hidden>
   <div class="co">
     <div class="brand" style="justify-content:center;margin-bottom:22px"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
-    <div class="stepper" id="coStepper" aria-hidden="true"><i></i><i></i></div>
+    <div class="stepper" id="coStepper" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="panel" id="coBody"></div>
     <p class="alt" style="margin-top:18px"><span id="coWho" style="color:var(--tx3)"></span> · <button type="button" id="coLogout">Sign out</button></p>
   </div>
@@ -412,13 +412,13 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA<span>ELITE</span></b></div>
     <nav class="nav-l" id="sideNav" aria-label="Main"></nav>
     <div class="side-foot">
-      <div class="subcard"><div class="row"><small>SUBSCRIPTION</small><span class="pill ok" id="sideBadge">ACTIVE</span></div><div class="t" id="sideLeft"></div></div>
+      <div class="subcard"><div class="row"><small>SOLDE</small><span class="pill ok" id="sideBadge">ACTIF</span></div><div class="t" id="sideLeft"></div><button class="btn sm block" style="margin-top:10px" type="button" onclick="go('wallet')">Recharger</button></div>
       <div class="who" id="sideEmail"></div>
       <button class="btn sm block" id="sideLogout"><svg class="i"><use href="#i-logout"/></svg>Sign out</button>
     </div>
   </aside>
   <div style="min-width:0">
-    <div class="top"><div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA</b></div><span class="pill ok">ACTIVE</span></div>
+    <div class="top"><div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-mark"/></svg><b>TAKAMURA</b></div><span class="pill ok" id="topBalance">—</span></div>
     <main class="main" id="main"></main>
   </div>
   <nav class="bar" id="bar" aria-label="Main"></nav>
@@ -436,7 +436,7 @@ const store = {
 };
 const S = {
   cfg: null, token: store.get(), me: null, verifyEmail: '', section: 'overview',
-  plan: 'day', phone: '', pay: { id: '', timer: null, view: 'plan' },
+  topup: { amount: 1000, proof: '', proofMime: '', view: 'amount', poll: null },
   rep: null, resendT: null,
 };
 const SVG = (name, cls) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('class', 'i' + (cls ? ' ' + cls : '')); s.setAttribute('aria-hidden', 'true'); const u = document.createElementNS('http://www.w3.org/2000/svg', 'use'); u.setAttribute('href', '#i-' + name); s.append(u); return s; };
@@ -496,8 +496,14 @@ function showView(name) {
 }
 async function ensureCfg() { if (!S.cfg) S.cfg = await api('/api/config'); return S.cfg; }
 function forget() { S.token = ''; store.clear(); S.me = null; }
-const planOf = (k) => (S.cfg.plans.find((p) => p.key === k) || { label: k, price: 0, currency: 'FCFA' });
-
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('Could not read the file.'));
+    r.readAsDataURL(file);
+  });
+}
 
 /* ============================== NAVIGATION ============================== */
 document.addEventListener('click', (e) => {
@@ -645,132 +651,119 @@ async function route() {
   }
 }
 
-/* ============================== CHECKOUT ============================== */
-function stopPoll() { clearTimeout(S.pay.timer); S.pay.timer = null; }
+/* ============================== CHECKOUT (WALLET TOP-UP) ============================== */
+function stopPoll() { clearTimeout(S.topup.poll); S.topup.poll = null; }
 function stepper(n) { [...$('coStepper').children].forEach((i, k) => i.classList.toggle('on', k <= n)); }
 function enterCheckout(opts = {}) {
   showView('checkout'); $('coWho').textContent = S.me.user.email;
   stopPoll();
-  if (S.me.pendingPayment && !opts.fresh) {
-    const p = S.me.pendingPayment; S.plan = p.plan; S.pay.id = p.id;
-    return renderPaying('waiting'), pollPayment();
-  }
-  renderPlan();
+  if (S.me.pendingTopup && !opts.fresh) return renderPending(), pollMe();
+  renderAmount();
 }
 function coStep(nodes) { const b = clear($('coBody')); b.classList.remove('step-in'); void b.offsetHeight; b.classList.add('step-in'); b.append(...nodes); const t = b.querySelector('h2'); if (t) { t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); } }
-function renderPlan() {
-  stepper(0); S.pay.view = 'plan';
-  const back = S.me && S.me.hasAccess ? h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', onclick: () => enterApp(), text: '← Back to dashboard' }) : null;
+const QUICK_AMOUNTS = [1000, 2000, 5000, 10000, 25000];
+function renderAmount() {
+  stepper(0); S.topup.view = 'amount';
+  const back = S.me && S.me.hasAccess ? h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', onclick: () => enterApp(), text: '← Retour au tableau de bord' }) : null;
+  const err = h('div', { class: 'ferr', id: 'amt-err', role: 'alert' });
+  const inp = h('input', { id: 'amtIn', type: 'number', inputmode: 'numeric', min: String(S.cfg.minTopupAmount || 100), step: '100', 'aria-describedby': 'amt-err', value: String(S.topup.amount) });
+  const quick = h('div', { class: 'opts two' }, QUICK_AMOUNTS.map((a) => h('button', { type: 'button', class: 'opt', onclick: () => { S.topup.amount = a; inp.value = String(a); } }, h('span', { class: 't' }, h('b', { text: `${fmtMoney(a)} FCFA` })))));
   coStep([
     back,
-    h('h2', { text: 'Choose your plan' }), h('p', { class: 'sub', text: 'One-time payment. Access starts as soon as the payment is confirmed.' }),
-    !S.cfg.paymentsEnabled ? h('div', { class: 'banner', role: 'alert', text: 'Payments are temporarily unavailable. Please try again later.' }) : null,
-    h('div', { class: 'plans', role: 'radiogroup', 'aria-label': 'Plan' }, S.cfg.plans.map((p) => {
-      const b = h('button', { class: 'plan', role: 'radio', 'aria-checked': String(S.plan === p.key), type: 'button', onclick: () => { S.plan = p.key; [...b.parentNode.children].forEach((c) => c.setAttribute('aria-checked', String(c === b))); } },
-        h('span', { class: 'eyebrow', text: p.label.toUpperCase() }),
-        h('strong', {}, fmtMoney(p.price), h('small', { text: p.currency })),
-        h('span', { style: 'color:var(--tx3);font-size:13px', text: p.key === 'day' ? 'Best for a single case' : 'Best for ongoing reporting' }));
-      return b;
-    })),
-    h('button', { class: 'btn primary block', style: 'margin-top:22px', type: 'button', disabled: !S.cfg.paymentsEnabled, onclick: renderReview }, 'Continue to payment'),
+    h('h2', { text: 'Recharger mon solde' }), h('p', { class: 'sub', text: `Choisissez le montant à envoyer sur Money Fusion. Minimum ${fmtMoney(S.me.minUsableBalance || S.cfg.minUsableBalance)} FCFA pour pouvoir utiliser la plateforme.` }),
+    quick,
+    h('div', { class: 'field', style: 'margin-top:14px' }, h('label', { for: 'amtIn', text: 'Montant personnalisé (FCFA)' }), h('div', { class: 'inp' }, inp), err),
+    h('button', { class: 'btn primary block', style: 'margin-top:14px', type: 'button', onclick: () => {
+      const v = Math.round(Number(inp.value));
+      const min = S.cfg.minTopupAmount || 100, max = S.cfg.maxTopupAmount || 2000000;
+      if (!Number.isFinite(v) || v < min || v > max) { err.textContent = `Entrez un montant entre ${fmtMoney(min)} et ${fmtMoney(max)} FCFA.`; return; }
+      S.topup.amount = v; renderPay();
+    } }, 'Continuer'),
+    S.cfg.moneyFusionCountries ? h('p', { style: 'margin-top:16px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Money Fusion accepte les paiements depuis : ' + S.cfg.moneyFusionCountries.map((c) => c.label).join(', ') + '.' }) : null,
   ]);
 }
-function renderReview(errMsg) {
-  stepper(1); S.pay.view = 'review';
-  const p = planOf(S.plan);
-  const err = h('div', { class: 'ferr', id: 'phone-err', role: 'alert' });
-  const phone = h('input', { id: 'phoneIn', type: 'tel', inputmode: 'numeric', autocomplete: 'tel-national', placeholder: '6XX XXX XXX', 'aria-describedby': 'phone-err', value: S.phone });
-  const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Pay securely'));
+function renderPay() {
+  stepper(1); S.topup.view = 'pay';
+  coStep([
+    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderAmount, text: '← Retour' }),
+    h('h2', { text: 'Payer sur Money Fusion' }), h('p', { class: 'sub', text: `Payez ${fmtMoney(S.topup.amount)} FCFA sur le lien Money Fusion ci-dessous, puis revenez ici pour envoyer votre preuve de paiement.` }),
+    h('a', { class: 'btn primary block', href: S.cfg.moneyFusionUrl, target: '_blank', rel: 'noopener' }, `Payer ${fmtMoney(S.topup.amount)} FCFA sur Money Fusion`, SVG('arrow')),
+    h('div', { class: 'note', style: 'margin-top:18px' }, 'Une fois le paiement effectué, prenez une capture d’écran de la confirmation puis continuez ci-dessous.'),
+    h('button', { class: 'btn block', style: 'margin-top:14px', type: 'button', onclick: renderUpload, text: "J'ai payé — envoyer ma preuve" }),
+  ]);
+}
+function renderUpload(errMsg) {
+  stepper(1); S.topup.view = 'upload';
+  const err = h('div', { class: 'ferr', role: 'alert' });
+  const file = h('input', { id: 'proofIn', type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+  const preview = h('div', { style: 'margin-top:12px' });
+  file.addEventListener('change', async () => {
+    err.textContent = ''; clear(preview);
+    const f = file.files && file.files[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { err.textContent = 'Image trop lourde (5 Mo maximum).'; file.value = ''; return; }
+    try {
+      const dataUrl = await fileToDataUrl(f);
+      S.topup.proof = dataUrl;
+      preview.append(h('img', { src: dataUrl, alt: 'Aperçu de la preuve de paiement', style: 'max-width:100%;max-height:260px;border-radius:10px;border:1px solid var(--line2)' }));
+    } catch { err.textContent = 'Impossible de lire ce fichier.'; }
+  });
+  const btn = h('button', { class: 'btn primary block', style: 'margin-top:16px', type: 'button' }, h('span', { class: 'sp-label' }, 'Envoyer pour vérification'));
   btn.addEventListener('click', async () => {
-    const digits = phone.value.replace(/[\s().-]/g, '').replace(/^\+?237/, '');
-    if (!/^6\d{8}$/.test(digits)) { phone.setAttribute('aria-invalid', 'true'); err.textContent = 'Enter a valid 9-digit Cameroon number.'; phone.focus(); return; }
-    S.phone = digits;
+    if (!S.topup.proof) { err.textContent = 'Ajoutez la capture d’écran de votre paiement.'; return; }
     setLoading(btn, true);
     try {
-      const d = await api('/api/payment/start', { method: 'POST', body: { plan: S.plan, phone: S.phone } });
-      S.pay.id = d.payment.id;
-      // On ne redirige plus tout de suite : on montre d'abord un rappel du numéro à réutiliser,
-      // pour éviter que le client tape un numéro différent sur la page Money Fusion (ce qui
-      // casserait le rapprochement automatique côté serveur).
-      renderPhoneReminder(digits, d.checkoutUrl);
+      await api('/api/topup/request', { method: 'POST', body: { amount: S.topup.amount, proofBase64: S.topup.proof } });
+      S.me = await api('/api/me');
+      renderPending(); pollMe();
     } catch (e) {
       setLoading(btn, false);
       if (e.status === 401) { forget(); return showView('auth'); }
-      renderReview(e.message);
+      err.textContent = e.message;
     }
   });
   coStep([
-    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderPlan, text: '← Back' }),
-    h('h2', { text: 'Review & pay' }), h('p', { class: 'sub', text: 'Check the details, then confirm.' }),
+    h('button', { class: 'btn ghost sm', style: 'margin-bottom:14px', type: 'button', onclick: renderPay, text: '← Retour' }),
+    h('h2', { text: 'Envoyer la preuve de paiement' }), h('p', { class: 'sub', text: `Montant déclaré : ${fmtMoney(S.topup.amount)} FCFA. Un administrateur vérifie la capture avant de créditer votre solde.` }),
     errMsg ? h('div', { class: 'banner', role: 'alert', text: errMsg }) : null,
-    h('div', { class: 'recap' },
-      h('div', {}, h('span', { text: 'Amount' }), h('b', { text: `${fmtMoney(p.price)} ${p.currency}` })),
-      h('div', {}, h('span', { text: 'Plan' }), h('b', { text: p.label }))),
-    h('div', { class: 'field', style: 'margin-top:18px' }, h('label', { for: 'phoneIn', text: 'Mobile Money / contact number' }), h('div', { class: 'inp' }, phone), err),
+    h('div', { class: 'field' }, h('label', { for: 'proofIn', text: 'Capture d’écran du paiement (PNG, JPG ou WEBP)' }), file, err),
+    preview,
     btn,
-    h('p', { style: 'margin-top:14px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Payment is processed by Money Fusion. Access is granted only after the payment is confirmed.' }),
   ]);
 }
-// Écran-tampon affiché juste avant la redirection : redit le numéro à utiliser, en gros, pour que
-// le client ne puisse pas le manquer avant de quitter le site.
-function renderPhoneReminder(digits, checkoutUrl) {
-  const pretty = digits.replace(/(\d{1})(\d{2})(\d{3})(\d{3})/, '$1$2 $3 $4');
-  const btn = h('button', { class: 'btn primary block', type: 'button' }, h('span', { class: 'sp-label' }, 'Continuer vers le paiement'));
-  btn.addEventListener('click', () => { window.location.href = checkoutUrl; });
+function renderPending() {
+  stepper(2); S.topup.view = 'pending';
+  const p = S.me.pendingTopup;
   coStep([
-    h('h2', { text: 'Un dernier point important' }),
-    h('p', { class: 'sub', text: 'Tu vas être redirigé vers la page de paiement Money Fusion.' }),
-    h('div', { class: 'note', style: 'text-align:center;font-size:16px' },
-      'Utilise CE numéro sur la page suivante :',
-      h('div', { style: 'font-size:26px;font-weight:600;letter-spacing:.02em;margin-top:8px', text: pretty })),
-    h('p', { style: 'margin:14px 0 18px;color:var(--tx3);font-size:12.5px;text-align:center', text: 'Un numéro différent empêche l\u2019activation automatique de ton accès.' }),
-    btn,
-    h('button', { class: 'btn ghost sm', style: 'margin-top:10px;width:100%', type: 'button', onclick: () => renderReview(), text: '← Modifier le numéro' }),
+    h('div', { class: 'done-box', style: 'padding:6px 0 0' },
+      h('div', { class: 'tick' }, SVG('mail')),
+      h('h2', { text: 'Recharge en attente de vérification' }),
+      h('p', { class: 'sub', style: 'margin:8px auto 0;max-width:420px', text: `${fmtMoney(p ? p.amount : S.topup.amount)} FCFA — un administrateur vérifie votre preuve de paiement. Votre solde sera crédité dès l’approbation. Cette page se met à jour automatiquement.` }),
+      h('button', { class: 'btn block', style: 'margin-top:18px', type: 'button', onclick: logout, text: 'Se déconnecter' })),
   ]);
 }
-const TL = [['init', 'Initializing payment...'], ['waiting', 'Waiting for payment...'], ['confirmed', 'Payment confirmed ✓'], ['active', 'Access activated']];
-function renderPaying(stage) {
-  stepper(1); S.pay.view = 'paying';
-  const idx = TL.findIndex((t) => t[0] === stage);
-  const list = h('ul', { class: 'tl', 'aria-label': 'Payment progress' }, TL.map((t, k) => h('li', { class: k < idx ? 'ok' : k === idx ? (stage === 'active' || stage === 'confirmed' ? 'ok' : 'cur') : '' }, h('span', { class: 'd' }, SVG('check')), t[1])));
-  coStep([
-    h('h2', { text: stage === 'init' ? 'Starting payment' : stage === 'waiting' ? 'Confirming your payment' : 'Payment received' }),
-    h('p', { class: 'sub', text: stage === 'waiting' ? 'This page updates automatically once Money Fusion confirms the payment.' : 'Please keep this page open.' }),
-    list,
-    stage === 'waiting' ? h('button', { class: 'btn block', type: 'button', onclick: () => { stopPoll(); renderReview(); }, text: 'Cancel and go back' }) : null,
-  ]);
-}
-function payFail(status) {
+function pollMe() {
   stopPoll();
-  const msg = status === 'expired' ? 'Payment session expired.' : status === 'cancelled' ? 'Payment cancelled.' : 'Payment declined. Please try again.';
-  coStep([
-    h('div', { class: 'done-box', style: 'padding:6px 0 0' }, h('div', { class: 'tick bad' }, SVG('x')), h('h2', { text: msg }), h('p', { class: 'sub', text: 'You have not been charged unless the provider confirms it. You can try again.' }),
-      h('button', { class: 'btn primary block', type: 'button', onclick: renderReview, text: 'Try again' })),
-  ]);
-}
-function pollPayment() {
-  stopPoll();
-  const started = Date.now();
   const tick = async () => {
-    if (S.pay.view !== 'paying') return;
+    if (S.topup.view !== 'pending') return;
     try {
-      const d = await api('/api/payment/status/' + encodeURIComponent(S.pay.id));
-      if (d.status === 'paid') {
-        renderPaying('confirmed');
-        setTimeout(async () => { renderPaying('active'); try { S.me = await api('/api/me'); } catch {} setTimeout(() => (S.me && S.me.hasAccess ? enterApp() : route()), 900); }, 1100);
-        return;
-      }
-      if (['failed', 'expired', 'cancelled'].includes(d.status)) return payFail(d.status);
+      S.me = await api('/api/me');
+      if (S.me.hasAccess) { stopPoll(); return enterApp(); }
+      if (!S.me.pendingTopup) { stopPoll(); return renderAmount(); } // rejetée : on repart de zéro
     } catch (e) { if (e.status === 401) { forget(); return showView('auth'); } }
-    if (Date.now() - started > (S.cfg.paymentTtlMinutes + 2) * 60000) return payFail('expired');
-    S.pay.timer = setTimeout(tick, 4000);
+    S.topup.poll = setTimeout(tick, 6000);
   };
-  S.pay.timer = setTimeout(tick, 3000);
+  S.topup.poll = setTimeout(tick, 6000);
 }
 
 /* ============================== APP SHELL ============================== */
-const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['history', 'History', 'history'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
-let accessTimer = null;
+const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['history', 'History', 'history'], ['wallet', 'Portefeuille', 'lock'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
+let balanceTimer = null;
+function updateBalanceUI() {
+  const bal = `${fmtMoney(S.me.balance)} FCFA`;
+  $('sideLeft').textContent = bal;
+  const top = $('topBalance'); if (top) top.textContent = bal;
+}
 function enterApp(section) {
   showView('app'); stopPoll();
   const side = clear($('sideNav')), bar = clear($('bar'));
@@ -779,13 +772,9 @@ function enterApp(section) {
     bar.append(h('button', { type: 'button', data: { s: k }, 'aria-label': label, onclick: () => go(k) }, SVG(ic), label));
   });
   $('sideEmail').textContent = S.me.user.email;
-  clearInterval(accessTimer);
-  const tick = () => {
-    const left = S.me.access.expiresAt - Date.now();
-    if (left <= 0) { clearInterval(accessTimer); route(); return; }
-    $('sideLeft').textContent = `${planOf(S.me.access.plan).label} · ${fmtLeft(left)} left`;
-  };
-  tick(); accessTimer = setInterval(tick, 30000);
+  updateBalanceUI();
+  clearInterval(balanceTimer);
+  balanceTimer = setInterval(async () => { try { S.me = await api('/api/me'); updateBalanceUI(); if (S.section === 'wallet') go('wallet'); } catch {} }, 30000);
   go(section || 'overview');
 }
 function go(s) {
@@ -793,7 +782,7 @@ function go(s) {
   document.querySelectorAll('#sideNav button,#bar button').forEach((b) => { if (b.dataset.s === s) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const m = clear($('main')); m.classList.remove('step-in'); void m.offsetHeight; m.classList.add('step-in');
   window.scrollTo(0, 0);
-  ({ overview: renderOverview, report: renderReport, history: renderHistory, security: renderSecurity, account: renderAccount })[s](m);
+  ({ overview: renderOverview, report: renderReport, history: renderHistory, wallet: renderWallet, security: renderSecurity, account: renderAccount })[s](m);
   const t = m.querySelector('h1'); if (t) { t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); }
 }
 const greeting = () => { const hr = new Date().getHours(); return hr < 5 ? 'Good evening,' : hr < 12 ? 'Good morning,' : hr < 18 ? 'Good afternoon,' : 'Good evening,'; };
@@ -803,12 +792,11 @@ const sevLabel = (v) => (SEV[v] ? SEV[v][0] : v);
 const statusPill = (s) => h('span', { class: 'pill ' + (s === 'sent' ? 'ok' : 'err'), text: s === 'sent' ? 'SENT' : 'FAILED' });
 
 function renderOverview(m) {
-  const a = S.me.access, left = a.expiresAt - Date.now();
   m.append(
-    h('div', { class: 'pagehead' }, h('h1', {}, h('small', { text: greeting() }), nameOf(S.me.user.email)), h('span', { class: 'pill ok', text: 'ACTIVE' })),
+    h('div', { class: 'pagehead' }, h('h1', {}, h('small', { text: greeting() }), nameOf(S.me.user.email)), h('span', { class: 'pill ok', text: 'ACTIF' })),
     h('div', { class: 'stats' },
-      stat('Access', fmtLeft(left), 'remaining'), stat('Plan', planOf(a.plan).label, 'current plan'),
-      stat('Expiration', fmtDay(a.expiresAt), new Date(a.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })), stat('Reports', String(S.me.reports || 0), 'submitted')),
+      stat('Solde', `${fmtMoney(S.me.balance)} FCFA`, 'disponible'), stat('Minimum requis', `${fmtMoney(S.me.minUsableBalance)} FCFA`, 'pour utiliser la plateforme'),
+      stat('Reports', String(S.me.reports || 0), 'soumis')),
     h('div', { class: 'card hero-card' }, h('div', {}, h('h2', { text: 'Create a report' }), h('p', { text: 'A guided five-step form. Your report is sent to WhatsApp’s official support channels with a case ID.' })),
       h('button', { class: 'btn primary', type: 'button', onclick: () => go('report') }, 'Start a report', SVG('arrow'))),
     h('div', { class: 'sec-h' }, h('h3', { text: 'Recent reports' }), h('button', { class: 'btn ghost sm', type: 'button', onclick: () => go('history'), text: 'View all' })),
@@ -930,6 +918,24 @@ function renderHistory(m) {
   }).catch((e) => { const box = $('hist'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: e.message })); } });
 }
 
+/* ================================ WALLET ================================ */
+const TOPUP_STATUS_LABEL = { pending: 'En attente', approved: 'Approuvée', rejected: 'Rejetée' };
+function topupPill(s) { return h('span', { class: 'pill ' + (s === 'approved' ? 'ok' : s === 'rejected' ? 'err' : ''), text: (TOPUP_STATUS_LABEL[s] || s).toUpperCase() }); }
+function renderWallet(m) {
+  m.append(
+    h('div', { class: 'pagehead' }, h('h1', { text: 'Portefeuille' })),
+    h('div', { class: 'stats' }, stat('Solde actuel', `${fmtMoney(S.me.balance)} FCFA`, 'disponible')),
+    h('div', { class: 'card hero-card' }, h('div', {}, h('h2', { text: 'Recharger mon solde' }), h('p', { text: `Payez sur Money Fusion puis envoyez votre preuve. Un admin valide avant crédit. Minimum ${fmtMoney(S.me.minUsableBalance)} FCFA pour utiliser la plateforme.` })),
+      h('button', { class: 'btn primary', type: 'button', disabled: S.me.pending, onclick: () => enterCheckout({ fresh: true }) }, S.me.pending ? 'Recharge en cours de vérification' : 'Recharger', SVG('arrow'))),
+    h('div', { class: 'sec-h' }, h('h3', { text: 'Historique des recharges' })),
+    h('div', { class: 'list', id: 'topupHist' }, h('div', { class: 'sk' }), h('div', { class: 'sk' })));
+  api('/api/topup/mine').then((d) => {
+    const box = $('topupHist'); if (!box) return; clear(box);
+    if (!d.topups.length) return box.append(h('div', { class: 'empty', text: 'Aucune recharge pour le moment.' }));
+    d.topups.forEach((t) => box.append(h('div', { class: 'item' }, h('div', { class: 'a' }, h('b', { text: `${fmtMoney(t.amount)} ${t.currency}` }), h('span', { text: fmtDate(t.createdAt) })), topupPill(t.status))));
+  }).catch(() => { const box = $('topupHist'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: 'Impossible de charger l’historique.' })); } });
+}
+
 /* ========================== SECURITY / ACCOUNT ========================== */
 function renderSecurity(m) {
   const row = (t, s) => h('div', { class: 'item' }, h('div', { class: 'a' }, h('b', { text: t }), h('span', { text: s })), h('span', { class: 'pill ok', text: 'ON' }));
@@ -938,21 +944,19 @@ function renderSecurity(m) {
       row('Email verified', 'Your address was confirmed with a one-time code.'),
       row('Password protection', 'Passwords are salted and hashed with scrypt; never stored in clear text.'),
       row('Session tokens', 'Stored hashed on the server and valid for 30 days.'),
-      row('Verified payments', 'Access is only activated after your payment provider confirms the transaction.'),
+      row('Manual review', 'Wallet top-ups are only credited after an administrator checks your payment screenshot.'),
       row('Rate limiting', 'Sensitive actions are throttled to block abuse and brute force.')),
     h('div', { style: 'margin-top:22px' }, h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out of this device')));
 }
 function renderAccount(m) {
-  const a = S.me.access;
-  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Account' }), h('span', { class: 'pill ok', text: 'ACTIVE' })),
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Account' }), h('span', { class: 'pill ok', text: S.me.hasAccess ? 'ACTIF' : 'SOLDE INSUFFISANT' })),
     h('div', { class: 'kv' },
       h('span', { text: 'Email' }), h('b', { text: S.me.user.email }),
-      h('span', { text: 'Plan' }), h('b', { text: planOf(a.plan).label }),
-      h('span', { text: 'Expires' }), h('b', { text: fmtDate(a.expiresAt) }),
-      h('span', { text: 'Member since' }), h('b', { text: S.me.user.createdAt ? fmtDay(S.me.user.createdAt) : '—' }),
+      h('span', { text: 'Solde' }), h('b', { text: `${fmtMoney(S.me.balance)} FCFA` }),
+      h('span', { text: 'Membre depuis' }), h('b', { text: S.me.user.createdAt ? fmtDay(S.me.user.createdAt) : '—' }),
       h('span', { text: 'Reports' }), h('b', { text: String(S.me.reports || 0) })),
     h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:22px' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => enterCheckout({ fresh: true }), text: 'Extend access' }),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => go('wallet'), text: 'Gérer mon portefeuille' }),
       h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out')));
 }
 
