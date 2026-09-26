@@ -337,12 +337,16 @@ async function sendVerificationEmail(email, code) {
   return mailer.sendMail({ to: email, subject, text, html });
 }
 async function sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination }) {
+  const { subject, body } = reportEmailContent({ caseId, category, severity, waNumber, message });
+  return mailer.sendMail({ to: destination, subject, text: body });
+}
+function reportEmailContent({ caseId, category, severity, waNumber, message }) {
   const subject = `Signalement WhatsApp — ${category} — ${waNumber}`;
   let body = `${caseId}\n`;
   body += `Catégorie : ${category}\nGravité : ${severity}\nNuméro / lien WhatsApp signalé : ${waNumber}\n\n`;
   if (message) body += `Message litigieux (copié par le déclarant) :\n${message}\n\n`;
   body += `Merci d'examiner ce compte pour violation des conditions d'utilisation WhatsApp.\n`;
-  return mailer.sendMail({ to: destination, subject, text: body });
+  return { subject, body };
 }
 async function sendTopupDecisionEmail(email, topup, decision, newBalance) {
   try {
@@ -650,17 +654,28 @@ app.post('/api/report', limitReport, async (req, res) => {
     const requested = Array.isArray(req.body?.destinations) ? req.body.destinations : [];
     const dests = requested.length ? [...new Set(requested.filter((d) => WHATSAPP_EMAILS.includes(d)))] : WHATSAPP_EMAILS;
     if (!dests.length) return res.status(400).json({ error: 'No valid destination selected.' });
+    const mode = req.body?.mode === 'manual' ? 'manual' : 'auto';
 
     const caseId = newCaseId();
-    const results = await Promise.allSettled(dests.map((d) => sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination: d })));
-    results.forEach((r, i) => { if (r.status === 'rejected') console.error('[report mail]', dests[i], r.reason && r.reason.message); });
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    const { subject, body } = reportEmailContent({ caseId, category, severity, waNumber, message });
+
+    let ok = 0;
+    if (mode === 'auto') {
+      const results = await Promise.allSettled(dests.map((d) => sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination: d })));
+      results.forEach((r, i) => { if (r.status === 'rejected') console.error('[report mail]', dests[i], r.reason && r.reason.message); });
+      ok = results.filter((r) => r.status === 'fulfilled').length;
+    }
+    // mode === 'manual': rien n'est envoyé côté serveur — le front ouvre l'appli mail de
+    // l'utilisateur (mailto:) avec le sujet/corps ci-dessous, pour un envoi depuis sa vraie adresse.
 
     await db.execute({
       sql: `INSERT INTO reports (user_id, case_id, category, severity, wa_number, message, created_at, email_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [user.id, caseId, category, severity, waNumber, message, Date.now(), `${ok}/${dests.length}`],
+      args: [user.id, caseId, category, severity, waNumber, message, Date.now(), mode === 'manual' ? `manual/${dests.length}` : `${ok}/${dests.length}`],
     });
-    res.json({ sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER });
+    res.json({
+      mode, sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER,
+      ...(mode === 'manual' ? { to: dests, subject, body } : {}),
+    });
   } catch (e) {
     console.error('[report]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -677,10 +692,12 @@ app.get('/api/reports', async (req, res) => {
     });
     res.json({
       reports: r.rows.map((x) => {
-        const [ok, total] = String(x.email_status || '0/0').split('/').map(Number);
+        const raw = String(x.email_status || '0/0');
+        const manual = raw.startsWith('manual');
+        const [ok, total] = raw.replace('manual/', '').split('/').map(Number);
         return {
           caseId: x.case_id, createdAt: Number(x.created_at), category: x.category, severity: x.severity,
-          target: x.wa_number, status: ok > 0 ? 'sent' : 'failed', delivered: ok || 0, total: total || 0,
+          target: x.wa_number, status: manual ? 'manual' : ok > 0 ? 'sent' : 'failed', delivered: ok || 0, total: total || 0,
         };
       }),
     });

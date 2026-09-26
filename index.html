@@ -842,7 +842,7 @@ const greeting = () => { const hr = new Date().getHours(); return hr < 5 ? 'Good
 const nameOf = (email) => { const n = email.split('@')[0].replace(/[._-]+/g, ' '); return n.charAt(0).toUpperCase() + n.slice(1); };
 const SEV = { 'Faible': ['Low', 'Minor concern', '#8b8a86'], 'Modérée': ['Moderate', 'Requires attention', '#c9a66b'], 'Élevée': ['High', 'Serious harm or repeated abuse', '#d9925f'], 'Critique — mineurs impliqués': ['Critical', 'Minors involved', '#d9736b'] };
 const sevLabel = (v) => (SEV[v] ? SEV[v][0] : v);
-const statusPill = (s) => h('span', { class: 'pill ' + (s === 'sent' ? 'ok' : 'err'), text: s === 'sent' ? 'SENT' : 'FAILED' });
+const statusPill = (s) => h('span', { class: 'pill ' + (s === 'sent' ? 'ok' : s === 'manual' ? 'gold' : 'err'), text: s === 'sent' ? 'SENT' : s === 'manual' ? 'DRAFTED (SEND YOURSELF)' : 'FAILED' });
 
 function renderOverview(m) {
   m.append(
@@ -922,6 +922,7 @@ function drawWiz() {
     setTimeout(() => ta.focus(), 60);
   } else {
     const sendBtn = h('button', { class: 'btn primary', type: 'button', id: 'submitBtn' }, h('span', { class: 'sp-label', text: 'Submit report' }));
+    const mailBtn = h('button', { class: 'btn ghost', type: 'button', id: 'mailBtn' }, h('span', { class: 'sp-label', text: 'Send from your own email app' }));
     const destWrap = h('div', { class: 'opts' }, S.cfg.destinations.map((d) => {
       const b = h('button', { type: 'button', class: 'opt cb', role: 'checkbox', 'aria-checked': String(R.dests.has(d.email)), onclick: () => { if (R.dests.has(d.email)) R.dests.delete(d.email); else R.dests.add(d.email); b.setAttribute('aria-checked', String(R.dests.has(d.email))); err.textContent = ''; } },
         h('span', { class: 'rd' }), h('span', { class: 't' }, h('b', { text: d.note || 'WhatsApp support' }), h('span', { text: d.email })));
@@ -933,21 +934,31 @@ function drawWiz() {
       h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), destWrap,
       h('div', { class: 'blk-t', text: 'Summary' }),
       h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
-      err, nav(sendBtn));
-    sendBtn.addEventListener('click', async () => {
+      err, nav(h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end' }, mailBtn, sendBtn)),
+      h('p', { class: 'hint', style: 'text-align:right;font-size:11.5px;margin-top:8px' }, "\u201cSubmit report\u201d has our server email the addresses above for you. \u201cSend from your own email app\u201d opens your mail client with everything pre-filled, and you send it yourself from your real address — nothing leaves our server."));
+    const doSend = async (mode, btn, labelWhenBusy) => {
       if (!R.dests.size) { err.textContent = 'Choose at least one destination.'; return; }
-      sendBtn.classList.add('busy'); sendBtn.disabled = true; sendBtn.setAttribute('aria-busy', 'true'); sendBtn.querySelector('.sp-label').textContent = 'Sending report...';
+      [sendBtn, mailBtn].forEach((b) => { b.disabled = true; });
+      btn.classList.add('busy'); btn.setAttribute('aria-busy', 'true'); btn.querySelector('.sp-label').textContent = labelWhenBusy;
       try {
-        const d = await api('/api/report', { method: 'POST', body: { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests] } });
-        R.done = d; try { S.me = await api('/api/me'); } catch {}
-        drawWiz();
+        const d = await api('/api/report', { method: 'POST', body: { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests], mode } });
+        try { S.me = await api('/api/me'); } catch {}
+        if (mode === 'manual') {
+          const mailto = 'mailto:' + d.to.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(d.subject) + '&body=' + encodeURIComponent(d.body);
+          window.location.href = mailto;
+        }
+        R.done = d; drawWiz();
       } catch (e) {
-        sendBtn.classList.remove('busy'); sendBtn.disabled = false; sendBtn.setAttribute('aria-busy', 'false'); sendBtn.querySelector('.sp-label').textContent = 'Submit report';
+        [sendBtn, mailBtn].forEach((b) => { b.disabled = false; b.classList.remove('busy'); b.setAttribute('aria-busy', 'false'); });
+        sendBtn.querySelector('.sp-label').textContent = 'Submit report';
+        mailBtn.querySelector('.sp-label').textContent = 'Send from your own email app';
         if (e.status === 401) { forget(); return showView('auth'); }
         if (e.status === 403) { toast(e.message, true); return route(); }
         err.textContent = e.message;
       }
-    });
+    };
+    sendBtn.addEventListener('click', () => doSend('auto', sendBtn, 'Sending report...'));
+    mailBtn.addEventListener('click', () => doSend('manual', mailBtn, 'Opening your email app...'));
   }
 }
 function radios(items, cur, onPick, two) {
@@ -961,12 +972,15 @@ function radios(items, cur, onPick, two) {
   return wrap;
 }
 function drawDone(box) {
-  const d = S.rep.done, ok = d.sent > 0;
+  const d = S.rep.done, manual = d.mode === 'manual', ok = manual ? true : d.sent > 0;
   const cid = h('span', { text: d.caseId });
+  const msg = manual
+    ? 'Your email app should have opened with everything pre-filled. Send it from there to finish — keep your case number for reference.'
+    : ok ? `Emailed to ${d.sent} of ${d.total} address${d.total > 1 ? 'es' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.';
   box.append(h('div', { class: 'card done-box step-in' },
     h('div', { class: 'tick' + (ok ? '' : ' bad') }, SVG(ok ? 'check' : 'x')),
-    h('h2', { text: ok ? 'Report submitted' : 'Report saved, not delivered' }),
-    h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: ok ? `Emailed to ${d.sent} of ${d.total} address${d.total > 1 ? 'es' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.' }),
+    h('h2', { text: ok ? (manual ? 'Report drafted' : 'Report submitted') : 'Report saved, not delivered' }),
+    h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: msg }),
     ok ? h('p', { class: 'hint', style: 'margin:6px auto 0;max-width:420px;font-size:12px;opacity:.8', text: d.disclaimer || 'These are public support addresses, not an official Meta API — monitoring and processing are not guaranteed.' }) : null,
     h('div', {}, h('div', { class: 'caseid' }, h('span', { class: 'eyebrow', text: 'CASE' }), cid,
       h('button', { class: 'btn ghost sm', type: 'button', 'aria-label': 'Copy case ID', onclick: async () => { try { await navigator.clipboard.writeText(d.caseId); toast('Case ID copied'); } catch { toast('Copy not available', true); } } }, SVG('copy')))),
