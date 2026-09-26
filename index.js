@@ -88,12 +88,17 @@ const WHATSAPP_EMAILS = [
   'accessibility@support.whatsapp.com',
 ];
 const DEST_NOTES = {
-  'support@support.whatsapp.com': 'General support',
-  'support@whatsapp.com': 'Support',
-  'android@support.whatsapp.com': 'Android',
-  'smb@support.whatsapp.com': 'WhatsApp Business',
-  'accessibility@support.whatsapp.com': 'Accessibility',
+  'support@support.whatsapp.com': 'Public address — General support',
+  'support@whatsapp.com': 'Public address — Support',
+  'android@support.whatsapp.com': 'Public address — Android',
+  'smb@support.whatsapp.com': 'Public address — WhatsApp Business',
+  'accessibility@support.whatsapp.com': 'Public address — Accessibility',
 };
+// Honnêteté : ces adresses sont des contacts publics couramment cités pour WhatsApp/Meta.
+// Il ne s'agit PAS d'une API officielle de signalement, et rien ne garantit qu'une boîte
+// mail donnée soit surveillée ou traitée par Meta. Ce disclaimer est renvoyé au front
+// (config + réponse de /api/report) pour être affiché à l'utilisateur avant et après l'envoi.
+const REPORT_DISCLAIMER = "Ce signalement est un e-mail envoyé à des adresses publiques associées au support WhatsApp/Meta. Ce n'est pas une API officielle de signalement, et rien ne garantit qu'une boîte mail est surveillée ou que le message sera traité. Pour un danger immédiat impliquant un mineur, contactez aussi les autorités locales.";
 
 const CATEGORIES = ['Fraude / Arnaque', "Pédocriminalité / Exploitation d'enfants", 'Spam', 'Vente illégale', 'Autre'];
 const SEVERITIES = ['Faible', 'Modérée', 'Élevée', 'Critique — mineurs impliqués'];
@@ -426,6 +431,7 @@ app.get('/api/config', (_req, res) => {
     categories: CATEGORIES,
     severities: SEVERITIES,
     codeTtlMinutes: Math.round(CODE_TTL_MS / 60000),
+    reportDisclaimer: REPORT_DISCLAIMER,
   });
 });
 
@@ -654,7 +660,7 @@ app.post('/api/report', limitReport, async (req, res) => {
       sql: `INSERT INTO reports (user_id, case_id, category, severity, wa_number, message, created_at, email_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [user.id, caseId, category, severity, waNumber, message, Date.now(), `${ok}/${dests.length}`],
     });
-    res.json({ sent: ok, total: dests.length, caseId });
+    res.json({ sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER });
   } catch (e) {
     console.error('[report]', e.message);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });

@@ -323,7 +323,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       <div>
         <span class="badge"><i></i>SECURE REPORTING PLATFORM</span>
         <h1>Report abuse.<br><em>Protect people.</em></h1>
-        <p class="lead">A structured, verified channel to report WhatsApp accounts involved in fraud, exploitation or illegal activity — delivered to the platform’s official support teams with a traceable case number.</p>
+        <p class="lead">A guided way to draft and send an abuse report by email to publicly listed WhatsApp/Meta support addresses, with a traceable case number. This is an independent tool, not an official Meta reporting API — we can't guarantee a given mailbox is monitored or that any action will follow.</p>
         <div class="cta">
           <button class="btn primary" data-go="auth-login">Access the platform <svg class="i"><use href="#i-arrow"/></svg></button>
           <button class="btn" id="howBtn">How it works</button>
@@ -364,7 +364,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       </div>
     </section>
   </main>
-  <footer class="foot">Reports are forwarded to the platform’s official support channels. If a minor is at risk, also contact your local authorities without delay. Takamura Elite is an independent service.</footer>
+  <footer class="foot">Reports are sent by email to publicly listed WhatsApp/Meta support addresses — not an official reporting API, and delivery to a monitored inbox is not guaranteed. If a minor is at risk, also contact your local authorities without delay. Takamura Elite is an independent service.</footer>
 </div>
 
 <!-- ============================== AUTH ============================== -->
@@ -851,7 +851,7 @@ function renderOverview(m) {
     h('div', { class: 'stats' },
       stat('Solde', `${fmtMoney(S.me.balance)} FCFA`, 'disponible'), stat('Minimum requis', `${fmtMoney(S.me.minUsableBalance)} FCFA`, 'pour utiliser la plateforme'),
       stat('Reports', String(S.me.reports || 0), 'soumis')),
-    h('div', { class: 'card hero-card' }, h('div', {}, h('h2', { text: 'Create a report' }), h('p', { text: 'A guided five-step form. Your report is sent to WhatsApp’s official support channels with a case ID.' })),
+    h('div', { class: 'card hero-card' }, h('div', {}, h('h2', { text: 'Create a report' }), h('p', { text: 'A guided five-step form. Your report is sent by email to publicly listed WhatsApp/Meta support addresses — not an official API — and you get a case ID.' })),
       h('button', { class: 'btn primary', type: 'button', onclick: () => go('report') }, 'Start a report', SVG('arrow'))),
     h('div', { class: 'sec-h' }, h('h3', { text: 'Recent reports' }), h('button', { class: 'btn ghost sm', type: 'button', onclick: () => go('history'), text: 'View all' })),
     h('div', { class: 'list', id: 'recent' }, h('div', { class: 'sk' }), h('div', { class: 'sk' })));
@@ -928,6 +928,8 @@ function drawWiz() {
       return b;
     }));
     body.append(h('h2', { text: 'Review & submit' }), h('p', { class: 'hint', text: 'Choose where to send the report, then confirm the summary.' }),
+      h('div', { style: 'display:flex;gap:10px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:16px;border:1px solid var(--gold-line);background:var(--gold-dim);color:var(--gold2);font-size:13px;line-height:1.5' },
+        SVG('lock'), h('span', { text: S.cfg.reportDisclaimer || "This sends an email to publicly listed WhatsApp/Meta addresses. It is not an official reporting API, and delivery to a monitored inbox isn't guaranteed." })),
       h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), destWrap,
       h('div', { class: 'blk-t', text: 'Summary' }),
       h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
@@ -964,7 +966,8 @@ function drawDone(box) {
   box.append(h('div', { class: 'card done-box step-in' },
     h('div', { class: 'tick' + (ok ? '' : ' bad') }, SVG(ok ? 'check' : 'x')),
     h('h2', { text: ok ? 'Report submitted' : 'Report saved, not delivered' }),
-    h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: ok ? `Delivered to ${d.sent} of ${d.total} destination${d.total > 1 ? 's' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.' }),
+    h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: ok ? `Emailed to ${d.sent} of ${d.total} address${d.total > 1 ? 'es' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.' }),
+    ok ? h('p', { class: 'hint', style: 'margin:6px auto 0;max-width:420px;font-size:12px;opacity:.8', text: d.disclaimer || 'These are public support addresses, not an official Meta API — monitoring and processing are not guaranteed.' }) : null,
     h('div', {}, h('div', { class: 'caseid' }, h('span', { class: 'eyebrow', text: 'CASE' }), cid,
       h('button', { class: 'btn ghost sm', type: 'button', 'aria-label': 'Copy case ID', onclick: async () => { try { await navigator.clipboard.writeText(d.caseId); toast('Case ID copied'); } catch { toast('Copy not available', true); } } }, SVG('copy')))),
     h('div', { style: 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap' },
