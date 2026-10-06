@@ -917,6 +917,30 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
   }
 });
 
+/* ============================ WHATSAPP WEBHOOK (Meta) ====================== */
+// Vérification : Meta envoie un GET avec hub.mode / hub.verify_token / hub.challenge.
+const WA_VERIFY_TOKEN = env('VERIFY_TOKEN', 'takamura_verif_2026');
+const WA_APP_SECRET = env('WHATSAPP_APP_SECRET'); // optionnel : active la vérification de signature des POST
+
+app.get('/webhook/whatsapp', (req, res) => {
+  if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === WA_VERIFY_TOKEN) {
+    return res.status(200).type('text/plain').send(String(req.query['hub.challenge'] ?? ''));
+  }
+  res.sendStatus(403);
+});
+
+// Réception des événements : toujours répondre 200 vite, sinon Meta réessaie.
+app.post('/webhook/whatsapp', (req, res) => {
+  if (WA_APP_SECRET) {
+    const sig = String(req.get('x-hub-signature-256') || '');
+    const expected = 'sha256=' + crypto.createHmac('sha256', WA_APP_SECRET).update(req.rawBody || Buffer.alloc(0)).digest('hex');
+    const a = Buffer.from(sig), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(403);
+  }
+  console.log('[WA webhook]', JSON.stringify(req.body).slice(0, 2000));
+  res.sendStatus(200);
+});
+
 /* ================================== ERRORS ================================= */
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown route.' }));
 // eslint-disable-next-line no-unused-vars
