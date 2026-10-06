@@ -6,7 +6,8 @@
    preuve de paiement envoyée par l'utilisateur, validation manuelle par un admin)
    + reports + history + admin.
 
-   Files: index.html, index.js, package.json only.
+   Files: index.html, index.js, whatsapp.js, admin-whatsapp.html, package.json.
+   WhatsApp (API Cloud Meta) : whatsapp.js — console admin : /admin/whatsapp.
    All secrets come from environment variables (see the ENV block below).
    ============================================================================ */
 
@@ -305,20 +306,54 @@ async function getBalance(userId) {
 }
 
 /* ================================== MAIL =================================== */
-async function sendViaBrevo({ to, subject, text, html }) {
+const MAIL_FONT = '-apple-system,Segoe UI,Helvetica,Arial,sans-serif';
+// Envoi via l'API Brevo : 3 tentatives sur erreur réseau / 429 / 5xx, message d'erreur détaillé dans les logs.
+async function sendViaBrevo({ to, subject, text, html, replyTo, tags }) {
   if (!BREVO_API_KEY || !BREVO_SENDER_EMAIL) throw new Error('Email provider not configured');
   const payload = { sender: { name: 'Takamura Elite', email: BREVO_SENDER_EMAIL }, to: [{ email: to }], subject, textContent: text };
   if (html) payload.htmlContent = html;
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: { 'api-key': BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) throw new Error(`Brevo responded ${res.status}`);
-  return res.json();
+  if (replyTo) payload.replyTo = { email: replyTo };
+  if (tags && tags.length) payload.tags = tags;
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, attempt * 700));
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) return res.json().catch(() => ({}));
+      const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+      lastErr = new Error(`Brevo ${res.status}: ${detail}`);
+      if (res.status !== 429 && res.status < 500) throw lastErr; // erreur définitive (clé, expéditeur, adresse)
+    } catch (e) {
+      if (e === lastErr) throw e;
+      lastErr = e; // réseau / délai dépassé : on réessaie
+    }
+  }
+  throw lastErr;
 }
 const mailer = { sendMail: sendViaBrevo };
+
+// Gabarit commun des e-mails HTML (les valeurs doivent être échappées par l'appelant via esc()).
+function emailLayout({ title, intro, bodyHtml, footer }) {
+  const f = (size, color, extra = '') => `font:${size} ${MAIL_FONT};color:${color};${extra}`;
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0a0a0b">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0a0a0b"><tr><td align="center" style="padding:28px 14px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#111113;border:1px solid #26262b;border-radius:14px">
+<tr><td style="padding:28px 28px 6px;${f('600 12px', '#c9a66b', 'letter-spacing:.24em')}">TAKAMURA ELITE</td></tr>
+<tr><td style="padding:6px 28px 0;${f('600 21px/1.3', '#ece8df')}">${esc(title)}</td></tr>
+${intro ? `<tr><td style="padding:8px 28px 0;${f('14px/1.6', '#b9b6ae')}">${esc(intro)}</td></tr>` : ''}
+<tr><td style="padding:18px 28px 8px;${f('14px/1.6', '#ece8df')}">${bodyHtml}</td></tr>
+<tr><td style="padding:16px 28px 24px;border-top:1px solid #26262b;${f('12px/1.6', '#8b8a86')}">${footer || 'Takamura Elite'}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+const emailCode = (code) => `<div style="display:inline-block;margin:4px 0;padding:14px 22px;border:1px solid rgba(201,166,107,.35);border-radius:10px;background:#16161a;font:600 30px ${MAIL_FONT};letter-spacing:.3em;color:#e0c48a">${esc(code)}</div>`;
+const emailRows = (rows) => `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">${rows.map(([k, v]) => `<tr><td style="padding:7px 0;font:13px ${MAIL_FONT};color:#8b8a86">${esc(k)}</td><td align="right" style="padding:7px 0;font:600 14px ${MAIL_FONT};color:#ece8df">${esc(v)}</td></tr>`).join('')}</table>`;
+const emailNote = (t) => `<p style="margin:14px 0 0;font:13px/1.6 ${MAIL_FONT};color:#b9b6ae">${esc(t)}</p>`;
 
 async function sendVerificationEmail(email, code) {
   const minutes = Math.round(CODE_TTL_MS / 60000);
@@ -327,14 +362,12 @@ async function sendVerificationEmail(email, code) {
     `Your Takamura Elite verification code / Votre code de vérification :\n\n    ${code}\n\n` +
     `Valid for ${minutes} minutes / Valable ${minutes} minutes.\n` +
     `If you did not create this account, ignore this email.\n\n— Takamura Elite`;
-  const html = `
-    <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#0a0a0b;color:#ece8df;padding:32px;border-radius:12px;max-width:480px">
-      <div style="font-size:12px;letter-spacing:.24em;color:#c9a66b;margin-bottom:18px">TAKAMURA ELITE</div>
-      <p style="margin:0 0 20px;color:#b9b6ae">Your verification code · Votre code de vérification</p>
-      <div style="display:inline-block;font-size:32px;letter-spacing:.32em;font-weight:600;color:#e0c48a;background:#141416;padding:14px 22px;border:1px solid rgba(201,166,107,.35);border-radius:10px">${esc(code)}</div>
-      <p style="margin:22px 0 0;color:#8b8a86;font-size:12px">Valid for ${minutes} minutes. If you did not create this account, ignore this email.</p>
-    </div>`;
-  return mailer.sendMail({ to: email, subject, text, html });
+  const html = emailLayout({
+    title: 'Votre code de vérification',
+    intro: `Your verification code · Valable ${minutes} minutes.`,
+    bodyHtml: emailCode(code) + emailNote("Si vous n'êtes pas à l'origine de cette inscription, ignorez cet e-mail. · If you did not create this account, ignore this email."),
+  });
+  return mailer.sendMail({ to: email, subject, text, html, tags: ['verification'] });
 }
 async function sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination }) {
   const { subject, body } = reportEmailContent({ caseId, category, severity, waNumber, message });
@@ -350,22 +383,35 @@ function reportEmailContent({ caseId, category, severity, waNumber, message }) {
 }
 async function sendTopupDecisionEmail(email, topup, decision, newBalance) {
   try {
-    const subject = decision === 'approved'
-      ? `Takamura Elite — Recharge de ${money(topup.amount)} ${WALLET_CURRENCY} approuvée`
-      : `Takamura Elite — Recharge de ${money(topup.amount)} ${WALLET_CURRENCY} refusée`;
-    const text = decision === 'approved'
-      ? `Votre recharge a été vérifiée et approuvée par un administrateur.\n\nMontant crédité : ${money(topup.amount)} ${WALLET_CURRENCY}\nNouveau solde : ${money(newBalance)} ${WALLET_CURRENCY}\n\n— Takamura Elite`
-      : `Votre demande de recharge de ${money(topup.amount)} ${WALLET_CURRENCY} n'a pas pu être validée (preuve de paiement introuvable ou incorrecte). Vous pouvez soumettre une nouvelle demande avec une capture d'écran valide.\n\n— Takamura Elite`;
-    await mailer.sendMail({ to: email, subject, text });
+    const amount = `${money(topup.amount)} ${WALLET_CURRENCY}`;
+    const approved = decision === 'approved';
+    const subject = `Takamura Elite — Recharge de ${amount} ${approved ? 'approuvée' : 'refusée'}`;
+    const text = approved
+      ? `Votre recharge a été vérifiée et approuvée par un administrateur.\n\nMontant crédité : ${amount}\nNouveau solde : ${money(newBalance)} ${WALLET_CURRENCY}\n\n— Takamura Elite`
+      : `Votre demande de recharge de ${amount} n'a pas pu être validée (preuve de paiement introuvable ou incorrecte). Vous pouvez soumettre une nouvelle demande avec une capture d'écran valide.\n\n— Takamura Elite`;
+    const html = emailLayout({
+      title: approved ? 'Recharge approuvée' : 'Recharge refusée',
+      intro: approved ? 'Votre paiement a été vérifié par un administrateur.' : "Votre demande n'a pas pu être validée.",
+      bodyHtml: approved
+        ? emailRows([['Montant crédité', amount], ['Nouveau solde', `${money(newBalance)} ${WALLET_CURRENCY}`]])
+        : emailRows([['Montant demandé', amount]]) + emailNote("La preuve de paiement est introuvable ou incorrecte. Vous pouvez soumettre une nouvelle demande avec une capture d'écran valide."),
+    });
+    await mailer.sendMail({ to: email, subject, text, html, tags: ['topup'] });
   } catch (e) { console.error('[MAIL topup]', e.message); }
 }
 async function sendAdminTopupNotice(email, amount) {
   if (!ADMIN_EMAIL) return;
   try {
+    const amt = `${money(amount)} ${WALLET_CURRENCY}`;
     await mailer.sendMail({
       to: ADMIN_EMAIL,
-      subject: `[Takamura] Nouvelle demande de recharge — ${money(amount)} ${WALLET_CURRENCY}`,
-      text: `Compte : ${email}\nMontant déclaré : ${money(amount)} ${WALLET_CURRENCY}\n\nÀ vérifier et approuver dans /admin (onglet Recharges).`,
+      subject: `[Takamura] Nouvelle demande de recharge — ${amt}`,
+      text: `Compte : ${email}\nMontant déclaré : ${amt}\n\nÀ vérifier et approuver dans /admin (onglet Recharges).`,
+      html: emailLayout({
+        title: 'Nouvelle demande de recharge',
+        bodyHtml: emailRows([['Compte', email], ['Montant déclaré', amt]]) + emailNote('À vérifier et approuver dans /admin (onglet Recharges).'),
+      }),
+      tags: ['admin-topup'],
     });
   } catch (e) { console.error('[MAIL admin topup]', e.message); }
 }
@@ -402,7 +448,7 @@ app.use((req, res, next) => {
 // La preuve de paiement (capture d'écran encodée en base64) ne transite que sur /api/topup/request,
 // qui a donc besoin d'une limite plus large ; toutes les autres routes gardent une limite stricte.
 app.use((req, res, next) => {
-  const limit = req.path === '/api/topup/request' ? '7mb' : '100kb';
+  const limit = req.path === '/api/topup/request' ? '7mb' : req.path === '/admin/wa/api/upload' ? '14mb' : '100kb';
   express.json({ limit, verify: (r, _res, buf) => { r.rawBody = buf; } })(req, res, next);
 });
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
@@ -672,6 +718,7 @@ app.post('/api/report', limitReport, async (req, res) => {
       sql: `INSERT INTO reports (user_id, case_id, category, severity, wa_number, message, created_at, email_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [user.id, caseId, category, severity, waNumber, message, Date.now(), mode === 'manual' ? `manual/${dests.length}` : `${ok}/${dests.length}`],
     });
+    wa.notifyReportReceived(user.id, caseId, category).catch(() => {});
     res.json({
       mode, sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER,
       ...(mode === 'manual' ? { to: dests, subject, body } : {}),
@@ -785,7 +832,7 @@ section[hidden]{display:none}
 <header><h1>TAKAMURA ELITE · ADMIN</h1>
 <nav role="tablist" aria-label="Sections">
 <button role="tab" aria-selected="true" data-tab="overview">Overview</button><button role="tab" aria-selected="false" data-tab="users">Users</button>
-<button role="tab" aria-selected="false" data-tab="topups">Recharges${pendingTopups ? ` (${pendingTopups})` : ''}</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button></nav></header>
+<button role="tab" aria-selected="false" data-tab="topups">Recharges${pendingTopups ? ` (${pendingTopups})` : ''}</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button><a class="act" href="/admin/whatsapp" style="text-decoration:none;display:inline-block;margin-left:6px">WhatsApp</a></nav></header>
 
 <section id="t-overview">
 <div class="grid">
@@ -875,6 +922,12 @@ app.post('/admin/users/reset-password', limitAdmin, adminAuth, requireAdminXhr, 
         to: user.email,
         subject: 'Takamura Elite — Your password has been reset',
         text: `An administrator reset your password.\n\nTemporary password: ${tempPassword}\n\nPlease sign in and change your password as soon as possible.\n\n— Takamura Elite`,
+        html: emailLayout({
+          title: 'Mot de passe réinitialisé',
+          intro: 'An administrator reset your password · Un administrateur a réinitialisé votre mot de passe.',
+          bodyHtml: emailCode(tempPassword).replace('letter-spacing:.3em', 'letter-spacing:.08em').replace('30px', '22px') + emailNote('Connectez-vous puis changez ce mot de passe dès que possible. · Please sign in and change it as soon as possible.'),
+        }),
+        tags: ['password-reset'],
       });
       emailed = true;
     } catch (e) { console.error('[admin reset mail]', e.message); }
@@ -903,6 +956,7 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
       await db.execute({ sql: `UPDATE topups SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
       const u = await db.execute({ sql: `SELECT email FROM users WHERE id = ?`, args: [t.user_id] });
       if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'rejected', null).catch(() => {});
+      wa.notifyTopupDecision(t.user_id, 'rejected', t.amount, null).catch(() => {});
       return res.json({ ok: true });
     }
     const r = await db.execute({ sql: `UPDATE topups SET status = 'approved', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
@@ -910,6 +964,7 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
     await db.execute({ sql: `UPDATE users SET balance = balance + ? WHERE id = ?`, args: [Number(t.amount), t.user_id] });
     const u = await db.execute({ sql: `SELECT email, balance FROM users WHERE id = ?`, args: [t.user_id] });
     if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'approved', Number(u.rows[0].balance)).catch(() => {});
+    wa.notifyTopupDecision(t.user_id, 'approved', t.amount, u.rows[0] ? Number(u.rows[0].balance) : 0).catch(() => {});
     res.json({ ok: true, newBalance: u.rows[0] ? Number(u.rows[0].balance) : null });
   } catch (e) {
     console.error('[admin decision]', e.message);
@@ -917,92 +972,12 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
   }
 });
 
-/* ============================ WHATSAPP WEBHOOK (Meta) ====================== */
-// Vérification : Meta envoie un GET avec hub.mode / hub.verify_token / hub.challenge.
-const WA_VERIFY_TOKEN = env('VERIFY_TOKEN', 'takamura_verif_2026');
-const WA_APP_SECRET = env('WHATSAPP_APP_SECRET'); // optionnel : active la vérification de signature des POST
-
-app.get('/webhook/whatsapp', (req, res) => {
-  if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === WA_VERIFY_TOKEN) {
-    return res.status(200).type('text/plain').send(String(req.query['hub.challenge'] ?? ''));
-  }
-  res.sendStatus(403);
-});
-
-// Réception des événements : toujours répondre 200 vite, sinon Meta réessaie.
-app.post('/webhook/whatsapp', (req, res) => {
-  if (WA_APP_SECRET) {
-    const sig = String(req.get('x-hub-signature-256') || '');
-    const expected = 'sha256=' + crypto.createHmac('sha256', WA_APP_SECRET).update(req.rawBody || Buffer.alloc(0)).digest('hex');
-    const a = Buffer.from(sig), b = Buffer.from(expected);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(403);
-  }
-  console.log('[WA webhook]', JSON.stringify(req.body).slice(0, 2000));
-  res.sendStatus(200);
-});
-
-/* ========================= WHATSAPP CLOUD API (envoi) ====================== */
-// Valeurs en dur, à la demande (surchargeables par des variables Railway du même nom).
-const WA_TOKEN = env('WHATSAPP_TOKEN', 'EAAds30j9eC4BSgXZASzWFYUWmiZAnVZBZBNgZAcXayfuVqm38wvvyBi5RmLLnWUBBgv7dAM1ZC4K0FDGfR6SnuHNrlft6wcZAZCdjebgRh0KWxzvTvcctsgMLAywGqoO1llfY4V2PDSHW80uEZB5mSxhqplbehMzctLnbdq63NRZCmflgOa1Gn06DcQpDIdHiLgLVyTWur8FxoxHbwjvLQea4Np9YWgJtnQIYp');
-const WA_PHONE_NUMBER_ID = env('WHATSAPP_PHONE_NUMBER_ID', '1370755836117468');
-const WA_GRAPH_VERSION = env('WHATSAPP_GRAPH_VERSION', 'v23.0');
-const WA_TEST_TO = '237679064679'; // destinataire fixe du test /admin/wa-test
-
-async function waSend(payload) {
-  const r = await fetch(`https://graph.facebook.com/${WA_GRAPH_VERSION}/${WA_PHONE_NUMBER_ID}/messages`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messaging_product: 'whatsapp', ...payload }),
-    signal: AbortSignal.timeout(15000),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    const err = new Error((data.error && data.error.message) || `WhatsApp API ${r.status}`);
-    err.status = r.status;
-    err.details = data.error || null;
-    throw err;
-  }
-  return data;
-}
-const waDigits = (n) => String(n || '').replace(/\D/g, ''); // 237679064679, sans « + »
-
-// Texte libre : possible seulement dans les 24 h qui suivent un message du client.
-function sendWhatsAppText(to, body) {
-  return waSend({ to: waDigits(to), type: 'text', text: { body: String(body).slice(0, 4000) } });
-}
-// Modèle approuvé : seul moyen d'écrire en premier (hello_world existe d'office sur le numéro test).
-function sendWhatsAppTemplate(to, name = 'hello_world', lang = 'en_US') {
-  return waSend({ to: waDigits(to), type: 'template', template: { name, language: { code: lang } } });
-}
-
-// Test depuis le téléphone : ouvre /admin/wa-test (login admin) → envoie hello_world à WA_TEST_TO.
-app.get('/admin/wa-test', limitAdmin, adminAuth, async (_req, res) => {
-  try {
-    const out = await sendWhatsAppTemplate(WA_TEST_TO);
-    res.json({ ok: true, to: WA_TEST_TO, result: out });
-  } catch (e) {
-    console.error('[wa-test]', e.message);
-    res.status(502).json({ ok: false, error: e.message, details: e.details || null });
-  }
-});
-
-// Erreur 133010 « Account not registered » : enregistre le numéro sur l'API Cloud.
-// À ouvrir une seule fois : /admin/wa-register (login admin). Le PIN (6 chiffres) est celui de la validation en deux étapes.
-const WA_PIN = env('WHATSAPP_PIN', '482915');
-app.get('/admin/wa-register', limitAdmin, adminAuth, async (_req, res) => {
-  try {
-    const r = await fetch(`https://graph.facebook.com/${WA_GRAPH_VERSION}/${WA_PHONE_NUMBER_ID}/register`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messaging_product: 'whatsapp', pin: WA_PIN }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const data = await r.json().catch(() => ({}));
-    res.status(r.ok ? 200 : 502).json({ ok: r.ok, result: data });
-  } catch (e) {
-    console.error('[wa-register]', e.message);
-    res.status(502).json({ ok: false, error: e.message });
-  }
+/* ========================= WHATSAPP (API Cloud Meta) ======================= */
+// Envoi, webhook /webhook/whatsapp, console /admin/whatsapp, notifications du portail :
+// tout est dans whatsapp.js (valeurs en dur dedans, surchargeables par variables Railway).
+const wa = require('./whatsapp').create({
+  app, db, env, getUserFromToken, adminAuth, requireAdminXhr, limitAdmin, rateLimit,
+  walletCurrency: WALLET_CURRENCY,
 });
 
 /* ================================== ERRORS ================================= */
@@ -1018,7 +993,8 @@ app.use((err, _req, res, _next) => {
 /* ================================== BOOT =================================== */
 (async () => {
   await initDb();
-  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review)`));
+  await wa.ready();
+  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review · WhatsApp Cloud API ${wa.cfg.version})`));
 })().catch((e) => {
   console.error('[BOOT] Startup failed:', e && e.message);
   process.exit(1);

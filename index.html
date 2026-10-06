@@ -1034,6 +1034,51 @@ function renderSecurity(m) {
       row('Rate limiting', 'Sensitive actions are throttled to block abuse and brute force.')),
     h('div', { style: 'margin-top:22px' }, h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out of this device')));
 }
+// Carte « Notifications WhatsApp » : le numéro est lié par un message envoyé DEPUIS ce numéro (preuve de possession + accord).
+function waCard() {
+  const box = h('div', { class: 'card', style: 'margin-top:22px' });
+  let poll = null;
+  const hint = (text) => h('p', { style: 'color:var(--tx2);font-size:14px;margin:0 0 14px', text });
+  async function load() {
+    clearInterval(poll);
+    clear(box);
+    let st;
+    try { st = await api('/api/wa/status'); } catch { box.remove(); return; }
+    if (!st.enabled) { box.remove(); return; }
+    box.append(h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px' },
+      h('b', { text: 'Notifications WhatsApp' }), h('span', { class: 'pill ' + (st.linked ? 'ok' : 'gold'), text: st.linked ? 'LIÉ' : 'NON LIÉ' })));
+    if (st.linked) {
+      box.append(hint(`Numéro ${st.number}. Tu reçois ici tes confirmations de recharge et de signalement. Écris STOP sur WhatsApp à tout moment pour arrêter.`),
+        h('button', { class: 'btn ghost sm', type: 'button', text: 'Délier mon WhatsApp', onclick: async (e) => {
+          const b = e.currentTarget; setLoading(b, true);
+          try { await api('/api/wa/unlink', { method: 'POST' }); toast('WhatsApp délié'); load(); } catch (err) { toast(err.message, true); setLoading(b, false); }
+        } }));
+    } else {
+      box.append(hint(st.optedOut
+        ? 'Tu t’es désinscrit(e) avec STOP. Tu peux relier ton WhatsApp quand tu veux.'
+        : 'Reçois tes confirmations de recharge et de signalement sur WhatsApp. Pour prouver que le numéro est le tien et nous donner ton accord, tu nous envoies un court message depuis ce numéro.'),
+      h('button', { class: 'btn primary sm', type: 'button', text: 'Lier mon WhatsApp', onclick: start }));
+    }
+  }
+  async function start(e) {
+    const b = e.currentTarget; setLoading(b, true);
+    try {
+      const r = await api('/api/wa/link-code', { method: 'POST' });
+      clear(box).append(h('b', { text: 'Dernière étape' }),
+        hint(`Ouvre WhatsApp et envoie le message déjà rempli (code ${r.code}, valable ${r.expiresInMinutes} minutes). Cette page se met à jour toute seule.`),
+        h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
+          h('a', { class: 'btn primary sm', href: r.link, target: '_blank', rel: 'noopener', text: 'Ouvrir WhatsApp' }),
+          h('button', { class: 'btn ghost sm', type: 'button', text: 'J’ai envoyé le message', onclick: load })));
+      let n = 0;
+      poll = setInterval(async () => {
+        if (!box.isConnected || ++n > 200) { clearInterval(poll); return; }
+        try { const st = await api('/api/wa/status'); if (st.linked) { toast('WhatsApp lié ✓'); load(); } } catch {}
+      }, 4500);
+    } catch (err) { toast(err.message, true); setLoading(b, false); }
+  }
+  load();
+  return box;
+}
 function renderAccount(m) {
   m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Account' }), h('span', { class: 'pill ok', text: S.me.hasAccess ? 'ACTIF' : 'SOLDE INSUFFISANT' })),
     h('div', { class: 'kv' },
@@ -1041,6 +1086,7 @@ function renderAccount(m) {
       h('span', { text: 'Solde' }), h('b', { text: `${fmtMoney(S.me.balance)} FCFA` }),
       h('span', { text: 'Membre depuis' }), h('b', { text: S.me.user.createdAt ? fmtDay(S.me.user.createdAt) : '—' }),
       h('span', { text: 'Reports' }), h('b', { text: String(S.me.reports || 0) })),
+    waCard(),
     h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:22px' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => go('wallet'), text: 'Gérer mon portefeuille' }),
       h('button', { class: 'btn ghost', type: 'button', onclick: enterGuide, text: "Voir le guide d'utilisation" }),

@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Takamura · WhatsApp</title>
+<style>
+:root{color-scheme:dark;--bg:#0a0a0b;--s:#111113;--s2:#16161a;--bd:rgba(255,255,255,.09);--tx:#ece8df;--mu:#8b8a86;--ac:#c9a66b;--ok:#6fbf8e;--er:#d9736b;--wa:#1f4d3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif;padding:14px;max-width:1100px;margin-inline:auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+h1{font-size:12px;letter-spacing:.22em;color:var(--ac);margin:0;font-weight:600}
+h2{font-size:15px;margin:18px 0 8px;font-weight:600}
+nav{display:flex;gap:4px;background:var(--s);border:1px solid var(--bd);border-radius:10px;padding:4px;flex-wrap:wrap;margin-bottom:14px}
+nav button{background:none;border:0;color:var(--mu);padding:7px 12px;border-radius:7px;font:inherit;cursor:pointer}
+nav button[aria-selected=true]{background:var(--s2);color:var(--tx)}
+button,.act{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--tx);cursor:pointer;text-decoration:none;display:inline-block}
+button:hover,.act:hover{border-color:var(--ac)}button:disabled{opacity:.5;cursor:wait}
+button.pri{background:var(--ac);color:#17130a;border-color:var(--ac);font-weight:600}button.no{color:var(--er)}
+input,select,textarea{width:100%;font:inherit;font-size:14px;background:var(--s);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:9px 10px}
+textarea{min-height:90px;resize:vertical}textarea.code{font-family:ui-monospace,Menlo,monospace;font-size:12px;min-height:170px}
+label{display:block;color:var(--mu);font-size:12px;margin:10px 0 4px}label.chk{display:flex;gap:8px;align-items:center;color:var(--tx);font-size:13px}label.chk input{width:auto}
+.card{background:var(--s);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.grow{flex:1;min-width:140px}
+.two{display:grid;grid-template-columns:minmax(220px,300px) 1fr;gap:12px}@media(max-width:760px){.two{grid-template-columns:1fr}}
+.list{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto}
+.crow{text-align:left;width:100%;display:block;padding:9px 11px}.crow small,.mu{color:var(--mu);font-size:12px}
+.b{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;border:1px solid var(--bd);color:var(--mu);margin-left:4px}
+.b.ok{color:var(--ok);border-color:rgba(111,191,142,.4)}.b.er{color:var(--er);border-color:rgba(217,115,107,.4)}.b.wa{color:var(--ac);border-color:rgba(201,166,107,.4)}
+.msgs{display:flex;flex-direction:column;gap:6px;max-height:48vh;overflow:auto;padding:4px 0;margin:10px 0}
+.m{max-width:85%;padding:7px 10px;border-radius:10px;background:var(--s2);border:1px solid var(--bd);white-space:pre-wrap;word-break:break-word}
+.m.out{align-self:flex-end;background:var(--wa)}.m small{display:block;color:var(--mu);font-size:11px;margin-top:3px}.m img{max-width:100%;max-height:220px;border-radius:6px;display:block;margin-bottom:4px}
+pre{background:#000;border:1px solid var(--bd);border-radius:8px;padding:10px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px}.kv span{color:var(--mu)}
+#toasts{position:fixed;left:12px;right:12px;bottom:12px;display:flex;flex-direction:column;gap:6px;z-index:9;pointer-events:none}
+.toast{background:#1d1d22;border:1px solid var(--bd);border-radius:10px;padding:10px 14px;box-shadow:0 8px 24px #0008}.toast.err{border-color:var(--er)}
+.qr img{width:150px;height:150px;background:#fff;border-radius:8px;padding:6px}
+</style>
+<header><h1>TAKAMURA ELITE · WHATSAPP</h1><a class="act" href="/admin">← Admin</a></header>
+<nav id="tabs" role="tablist"></nav>
+<main id="main"></main>
+<div id="toasts"></div>
+<script nonce="{{NONCE}}">
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k === 'value') n.value = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return n;
+}
+const clear = (n) => { while (n.firstChild) n.firstChild.remove(); return n; };
+const fmt = (ms) => (ms ? new Date(Number(ms)).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+const cut = (s, n) => (String(s || '').length > n ? String(s).slice(0, n - 1) + '…' : String(s || ''));
+const DAY = 86400000;
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'takamura-admin' }, body: body ? JSON.stringify(body) : undefined });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.ok === false) { const e = new Error(d.error || ('Erreur ' + r.status)); e.hint = d.hint; throw e; }
+  return d;
+}
+function toast(msg, err) {
+  const t = el('div', { class: 'toast' + (err ? ' err' : ''), text: msg });
+  $('#toasts').append(t); setTimeout(() => t.remove(), err ? 7000 : 3500);
+}
+const fail = (e) => toast(e.message + (e.hint ? ' — ' + e.hint : ''), true);
+async function act(btn, fn) {
+  btn.disabled = true;
+  try { await fn(); } catch (e) { fail(e); } finally { btn.disabled = false; }
+}
+const btn = (text, onclick, cls) => el('button', { type: 'button', class: cls || '', text, onclick: (e) => act(e.currentTarget, onclick) });
+const field = (label, input) => el('div', {}, el('label', { text: label }), input);
+const pre = (obj) => el('pre', { text: typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2) });
+const fileToB64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(new Error('Lecture du fichier impossible')); r.readAsDataURL(file); });
+const S = { to: '', group: false };
+
+/* ------------------------------- Inbox ------------------------------------ */
+async function inbox(root) {
+  const list = el('div', { class: 'list' });
+  const thread = el('div', { class: 'card' }, el('p', { class: 'mu', text: 'Choisis une conversation.' }));
+  root.append(el('div', { class: 'row' }, btn('Actualiser', loadList), btn('Nouveau numéro', async () => {
+    const n = (prompt('Numéro avec indicatif, sans + (ex. 237679064679)') || '').replace(/\D/g, '');
+    if (n) await openThread(n);
+  })), el('div', { class: 'two', style: 'margin-top:10px' }, list, thread));
+
+  async function loadList() {
+    const d = await api('GET', '/admin/wa/api/contacts');
+    clear(list);
+    if (!d.contacts.length) list.append(el('p', { class: 'mu', text: 'Aucun contact pour le moment.' }));
+    for (const c of d.contacts) {
+      const open = c.last_inbound_at && Date.now() - Number(c.last_inbound_at) < DAY;
+      list.append(el('button', { type: 'button', class: 'crow', onclick: () => openThread(c.wa_id).catch(fail) },
+        el('b', { text: c.name || '+' + c.wa_id }),
+        Number(c.opted_out) ? el('span', { class: 'b er', text: 'STOP' }) : Number(c.opted_in) ? el('span', { class: 'b ok', text: 'accord' }) : null,
+        open ? el('span', { class: 'b wa', text: '24h' }) : null,
+        el('br'), el('small', { text: '+' + c.wa_id + ' · ' + fmt(c.last_at) }), el('br'), el('span', { class: 'mu', text: cut(c.last_body, 60) })));
+    }
+  }
+  async function openThread(waId) {
+    const d = await api('GET', '/admin/wa/api/messages?wa_id=' + encodeURIComponent(waId));
+    const c = d.contact;
+    const open = c && c.last_inbound_at && Date.now() - Number(c.last_inbound_at) < DAY;
+    const msgs = el('div', { class: 'msgs' });
+    for (const m of d.messages) {
+      const isMedia = m.media_id && ['image', 'sticker'].includes(m.type);
+      msgs.append(el('div', { class: 'm ' + m.direction },
+        isMedia ? el('img', { src: '/admin/wa/media/' + m.media_id, alt: m.type }) : null,
+        m.media_id && !isMedia ? el('a', { href: '/admin/wa/media/' + m.media_id, target: '_blank', rel: 'noopener', text: '📎 ouvrir le fichier', style: 'color:var(--ac)' }) : null,
+        m.body ? el('div', { text: m.body }) : null,
+        el('small', { text: fmt(m.created_at) + (m.direction === 'out' ? ' · ' + ({ accepted: '⏳', sent: '✓', delivered: '✓✓', read: '✓✓ lu', failed: '⚠ échec' }[m.status] || m.status) : '') + (m.error ? ' · ' + m.error : '') })));
+    }
+    const text = el('textarea', { placeholder: open ? 'Ta réponse…' : 'Fenêtre de 24 h fermée : utilise un modèle (onglet Envoyer).' });
+    clear(thread).append(
+      el('div', { class: 'row' }, el('b', { text: (c && c.name) || '+' + waId }), el('span', { class: 'mu', text: '+' + waId }),
+        Number(c && c.opted_out) ? el('span', { class: 'b er', text: 'STOP' }) : Number(c && c.opted_in) ? el('span', { class: 'b ok', text: 'accord : ' + (c.consent_source || '') }) : el('span', { class: 'b', text: 'pas d\'accord enregistré' }),
+        open ? el('span', { class: 'b wa', text: 'fenêtre 24 h ouverte' }) : el('span', { class: 'b', text: 'fenêtre fermée' })),
+      msgs,
+      text,
+      el('div', { class: 'row', style: 'margin-top:8px' },
+        btn('Envoyer', async () => { await api('POST', '/admin/wa/api/send', { to: waId, type: 'text', text: text.value }); toast('Message accepté par Meta'); await openThread(waId); }, 'pri'),
+        btn('Autres types…', async () => { S.to = waId; S.group = false; show('send'); }),
+        btn('Accord', async () => {
+          if (!confirm('Tu confirmes avoir l\'accord de cette personne pour recevoir des messages WhatsApp de Takamura ?')) return;
+          await api('POST', '/admin/wa/api/consent', { wa_id: waId, attest: true, note: prompt('Note (ex. accord oral, formulaire)') || 'attesté' });
+          toast('Accord enregistré'); await openThread(waId); await loadList();
+        }),
+        btn('STOP', async () => { if (!confirm('Bloquer tout envoi vers ce contact ?')) return; await api('POST', '/admin/wa/api/optout', { wa_id: waId }); await openThread(waId); await loadList(); }, 'no')));
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+  await loadList();
+}
+
+/* ------------------------------- Envoyer ---------------------------------- */
+const EX = {
+  contacts: { contacts: [{ name: 'Service client', phone: '237600000000' }] },
+  buttons: { body: 'Que veux-tu faire ?', footer: 'Takamura Elite', buttons: [{ id: 'oui', title: 'Oui' }, { id: 'non', title: 'Non' }] },
+  list: { body: 'Choisis une option', button: 'Options', sections: [{ title: 'Menu', rows: [{ id: 'a', title: 'Option A', description: 'Détails' }, { id: 'b', title: 'Option B' }] }] },
+  cta_url: { body: 'Ouvre le portail', text: 'Ouvrir', url: 'https://takamura-elite2026.up.railway.app' },
+  flow: { body: 'Remplis le formulaire', cta: 'Ouvrir', flow_id: 'ID_DU_FLOW', screen: 'PREMIER_ECRAN' },
+  location_request: { body: 'Peux-tu partager ta position ?' },
+  call_permission: { body: 'Nous autorises-tu à t\'appeler sur WhatsApp ?' },
+  product: { catalog_id: 'ID_CATALOGUE', product_id: 'REF_PRODUIT', body: 'Voici le produit' },
+  product_list: { header: 'Nos produits', body: 'Sélection du moment', catalog_id: 'ID_CATALOGUE', sections: [{ title: 'Nouveautés', product_ids: ['REF1', 'REF2'] }] },
+};
+const TYPES = [['text', 'Texte'], ['template', 'Modèle approuvé'], ['image', 'Image'], ['video', 'Vidéo'], ['document', 'Document'], ['audio', 'Audio'], ['sticker', 'Autocollant'], ['location', 'Localisation'], ['reaction', 'Réaction emoji'], ['contacts', 'Contact(s)'], ['buttons', 'Boutons de réponse'], ['list', 'Liste de choix'], ['cta_url', 'Bouton avec lien'], ['flow', 'Formulaire (Flow)'], ['location_request', 'Demande de position'], ['call_permission', 'Demande d\'appel'], ['product', 'Produit (catalogue)'], ['product_list', 'Liste de produits']];
+
+function send(root) {
+  const to = el('input', { value: S.to, placeholder: '237679064679', inputmode: 'numeric' });
+  const group = el('input', { type: 'checkbox' }); group.checked = S.group;
+  const type = el('select', {}, TYPES.map(([v, l]) => el('option', { value: v, text: l })));
+  const replyTo = el('input', { placeholder: 'wamid… (optionnel : répondre à un message)' });
+  const area = el('div');
+  const out = el('div');
+  let collect = () => ({});
+
+  function renderFields() {
+    clear(area); const t = type.value;
+    if (t === 'text') {
+      const text = el('textarea'); const prev = el('input', { type: 'checkbox' });
+      area.append(field('Texte (24 h après le message du client)', text), el('label', { class: 'chk' }, prev, 'Aperçu du lien'));
+      collect = () => ({ text: text.value, preview_url: prev.checked });
+    } else if (t === 'template') {
+      const name = el('input', { value: 'hello_world' }), lang = el('input', { value: 'en_US' }), params = el('textarea', { placeholder: 'Une valeur par ligne : {{1}}, {{2}}…' });
+      area.append(field('Nom du modèle', name), field('Langue', lang), field('Paramètres', params));
+      collect = () => ({ name: name.value, lang: lang.value, params: params.value.split('\n').map((s) => s.trim()).filter(Boolean) });
+    } else if (['image', 'video', 'document', 'audio', 'sticker'].includes(t)) {
+      const link = el('input', { placeholder: 'https://…' }), id = el('input', { placeholder: 'ID média déjà téléversé' }), file = el('input', { type: 'file' });
+      const caption = el('input'), filename = el('input');
+      area.append(field('Lien https', link), field('ou ID média', id), field('ou fichier (téléversé chez Meta)', file),
+        ['image', 'video', 'document'].includes(t) ? field('Légende', caption) : null, t === 'document' ? field('Nom du fichier', filename) : null);
+      collect = async () => {
+        let mid = id.value.trim();
+        if (file.files[0]) {
+          const f = file.files[0];
+          const d = await api('POST', '/admin/wa/api/upload', { mime: f.type || 'application/octet-stream', filename: f.name, data: await fileToB64(f) });
+          mid = d.id; toast('Fichier téléversé : ' + mid);
+        }
+        return { ...(mid ? { id: mid } : { link: link.value.trim() }), caption: caption.value, filename: filename.value || undefined };
+      };
+    } else if (t === 'location') {
+      const lat = el('input', { placeholder: '4.0511' }), lng = el('input', { placeholder: '9.7679' }), name = el('input'), addr = el('input');
+      area.append(field('Latitude', lat), field('Longitude', lng), field('Nom du lieu', name), field('Adresse', addr));
+      collect = () => ({ latitude: lat.value, longitude: lng.value, name: name.value, address: addr.value });
+    } else if (t === 'reaction') {
+      const mid = el('input', { placeholder: 'wamid… du message reçu' }), emoji = el('input', { value: '👍' });
+      area.append(field('ID du message', mid), field('Emoji (vide = retirer)', emoji));
+      collect = () => ({ message_id: mid.value, emoji: emoji.value });
+    } else {
+      const j = el('textarea', { class: 'code' }); j.value = JSON.stringify(EX[t] || {}, null, 2);
+      area.append(field('Données (JSON) — modifie l\'exemple', j));
+      collect = () => { try { return JSON.parse(j.value); } catch { throw new Error('JSON invalide.'); } };
+    }
+  }
+  type.addEventListener('change', renderFields); renderFields();
+  root.append(el('div', { class: 'card' },
+    field('Destinataire (indicatif + numéro, sans +) ou ID de groupe', to),
+    el('label', { class: 'chk' }, group, 'Envoyer à un groupe'),
+    field('Type de message', type), area, field('Répondre à', replyTo),
+    el('div', { class: 'row', style: 'margin-top:12px' }, btn('Envoyer', async () => {
+      const data = await collect();
+      const res = await api('POST', '/admin/wa/api/send', { to: to.value, group: group.checked, type: type.value, reply_to: replyTo.value.trim() || undefined, ...data });
+      clear(out).append(pre(res)); toast('Accepté par Meta');
+    }, 'pri')), out));
+}
+
+/* ------------------------------- Modèles ---------------------------------- */
+async function tpl(root) {
+  const list = el('div');
+  const bodyOf = (t) => ((t.components || []).find((c) => c.type === 'BODY') || {}).text || '';
+  async function load() {
+    const d = await api('GET', '/admin/wa/api/templates');
+    clear(list);
+    if (!d.templates.length) list.append(el('p', { class: 'mu', text: 'Aucun modèle.' }));
+    for (const t of d.templates) {
+      list.append(el('div', { class: 'card' },
+        el('div', { class: 'row' }, el('b', { text: t.name }), el('span', { class: 'b ' + (t.status === 'APPROVED' ? 'ok' : t.status === 'REJECTED' ? 'er' : ''), text: t.status }), el('span', { class: 'b', text: t.category }), el('span', { class: 'b', text: t.language })),
+        el('p', { class: 'mu', text: bodyOf(t) || '(corps généré par Meta)' }), t.rejected_reason && t.rejected_reason !== 'NONE' ? el('p', { class: 'mu', text: 'Refus : ' + t.rejected_reason }) : null,
+        btn('Supprimer', async () => { if (!confirm('Supprimer « ' + t.name + ' » (toutes langues) ?')) return; await api('POST', '/admin/wa/api/templates/delete', { name: t.name }); toast('Supprimé'); await load(); }, 'no')));
+    }
+  }
+  const f = { name: el('input', { placeholder: 'mon_modele' }), category: el('select', {}, el('option', { value: 'UTILITY', text: 'UTILITY (transactionnel)' }), el('option', { value: 'MARKETING', text: 'MARKETING' })), language: el('input', { value: 'fr' }), header: el('input'), body: el('textarea', { placeholder: 'Bonjour {{1}}, …' }), examples: el('input', { placeholder: 'Exemples des variables, séparés par |' }), footer: el('input'), quick: el('input', { placeholder: 'Boutons de réponse rapide, séparés par |' }), urlText: el('input', { placeholder: 'Texte du bouton lien' }), url: el('input', { placeholder: 'https://…' }) };
+  root.append(el('div', { class: 'row' }, btn('Actualiser', load), btn('Créer les 4 modèles Takamura', async () => {
+    const d = await api('POST', '/admin/wa/api/templates/presets');
+    toast(d.results.map((r) => r.name + ' : ' + (r.ok ? r.status : 'déjà là / ' + cut(r.error, 40))).join('\n'));
+    await load();
+  }, 'pri')), el('p', { class: 'mu', text: 'Les modèles sont validés par Meta (quelques minutes à 24 h). Recharge approuvée/refusée, signalement reçu, code de vérification.' }), list,
+  el('h2', { text: 'Créer un modèle' }), el('div', { class: 'card' },
+    field('Nom (minuscules, chiffres, _)', f.name), field('Catégorie', f.category), field('Langue', f.language), field('En-tête (optionnel)', f.header), field('Corps', f.body), field('Exemples', f.examples), field('Pied de page', f.footer), field('Réponses rapides', f.quick),
+    field('Bouton lien — texte', f.urlText), field('Bouton lien — URL', f.url),
+    el('div', { class: 'row', style: 'margin-top:12px' }, btn('Soumettre à Meta', async () => {
+      const buttons = f.quick.value.split('|').map((s) => s.trim()).filter(Boolean).map((text) => ({ type: 'QUICK_REPLY', text }));
+      if (f.url.value.trim()) buttons.push({ type: 'URL', text: f.urlText.value, url: f.url.value.trim() });
+      const d = await api('POST', '/admin/wa/api/templates', { name: f.name.value, category: f.category.value, language: f.language.value, header: f.header.value, body: f.body.value, examples: f.examples.value.split('|').map((s) => s.trim()).filter(Boolean), footer: f.footer.value, buttons });
+      toast('Soumis : ' + (d.result.status || 'ok')); await load();
+    }, 'pri'))));
+  await load();
+}
+
+/* -------------------------------- Profil ---------------------------------- */
+async function profile(root) {
+  const d = await api('GET', '/admin/wa/api/profile');
+  const p = d.profile || {};
+  const f = { about: el('input', { value: p.about || '', maxlength: 139 }), description: el('textarea', { text: p.description || '' }), address: el('input', { value: p.address || '' }), email: el('input', { value: p.email || '' }), websites: el('input', { value: (p.websites || []).join(', '), placeholder: 'https://…, https://…' }), vertical: el('select', {}, d.verticals.map((v) => el('option', { value: v, text: v }))), photo: el('input', { type: 'file', accept: 'image/jpeg,image/png' }) };
+  f.vertical.value = p.vertical || 'UNDEFINED';
+  root.append(el('div', { class: 'card' },
+    p.profile_picture_url ? el('img', { src: '/admin/wa/api/image?u=' + encodeURIComponent(p.profile_picture_url), alt: 'photo', style: 'width:90px;height:90px;border-radius:50%;object-fit:cover' }) : null,
+    field('À propos (139 max)', f.about), field('Description', f.description), field('Adresse', f.address), field('E-mail', f.email), field('Sites web (2 max, séparés par des virgules)', f.websites), field('Secteur', f.vertical),
+    field('Nouvelle photo (JPEG/PNG, demande WHATSAPP_APP_ID)', f.photo),
+    el('div', { class: 'row', style: 'margin-top:12px' }, btn('Enregistrer', async () => {
+      const body = { about: f.about.value, description: f.description.value, address: f.address.value, email: f.email.value, vertical: f.vertical.value, websites: f.websites.value.split(',').map((s) => s.trim()).filter(Boolean) };
+      const file = f.photo.files[0];
+      if (file) body.picture = { mime: file.type, data: await fileToB64(file) };
+      await api('POST', '/admin/wa/api/profile', body); toast('Profil mis à jour');
+    }, 'pri'))));
+}
+
+/* ------------------------------ Liens & QR -------------------------------- */
+async function links(root) {
+  const d = await api('GET', '/admin/wa/api/qr');
+  const msg = el('input', { placeholder: 'Message pré-rempli (140 max)' });
+  const link = el('input', { readonly: true, value: d.link });
+  msg.addEventListener('input', () => { link.value = d.link + (msg.value ? '?text=' + encodeURIComponent(msg.value) : ''); });
+  const list = el('div');
+  function draw(codes) {
+    clear(list);
+    for (const q of codes) {
+      list.append(el('div', { class: 'card qr row' },
+        q.qr_image_url ? el('img', { src: '/admin/wa/api/image?u=' + encodeURIComponent(q.qr_image_url), alt: 'QR' }) : null,
+        el('div', { class: 'grow' }, el('b', { text: q.prefilled_message || '(sans message)' }), el('br'), el('span', { class: 'mu', text: q.deep_link_url || '' }), el('br'),
+          btn('Supprimer', async () => { await api('POST', '/admin/wa/api/qr/delete', { code: q.code }); draw(codes.filter((x) => x.code !== q.code)); }, 'no'))));
+    }
+    if (!codes.length) list.append(el('p', { class: 'mu', text: 'Aucun QR code.' }));
+  }
+  root.append(el('div', { class: 'card' }, el('h2', { text: 'Lien wa.me' }), field('Message pré-rempli', msg), field('Lien (copie-le)', link),
+    el('div', { class: 'row', style: 'margin-top:8px' }, btn('Copier', async () => { await navigator.clipboard.writeText(link.value); toast('Copié'); }), el('a', { class: 'act', href: '#', text: 'Tester' , onclick: (e) => { e.preventDefault(); window.open(link.value, '_blank', 'noopener'); } }))),
+  el('div', { class: 'card' }, el('h2', { text: 'Créer un QR code' }),
+    btn('Générer avec le message ci-dessus', async () => { const r = await api('POST', '/admin/wa/api/qr', { message: msg.value }); d.codes.unshift(r.qr); draw(d.codes); toast('QR créé'); }, 'pri')), list);
+  draw(d.codes);
+}
+
+/* ------------------------------- Catalogue -------------------------------- */
+async function shop(root) {
+  const s = (await api('GET', '/admin/wa/api/commerce').catch((e) => { root.append(el('div', { class: 'card' }, el('p', { text: 'Catalogue indisponible : ' + e.message }), el('p', { class: 'mu', text: e.hint || 'Connecte d\'abord un catalogue Meta à ton numéro (Commerce Manager).' }))); return null; }));
+  if (!s) return;
+  const vis = el('input', { type: 'checkbox' }), cart = el('input', { type: 'checkbox' });
+  vis.checked = !!s.settings.is_catalog_visible; cart.checked = !!s.settings.is_cart_enabled;
+  root.append(el('div', { class: 'card' }, el('label', { class: 'chk' }, vis, 'Catalogue visible dans le profil'), el('label', { class: 'chk' }, cart, 'Panier activé'),
+    el('div', { class: 'row', style: 'margin-top:10px' }, btn('Enregistrer', async () => { await api('POST', '/admin/wa/api/commerce', { catalog_visible: vis.checked, cart_enabled: cart.checked }); toast('Enregistré'); }, 'pri')),
+    el('p', { class: 'mu', text: 'Pour envoyer un produit ou une liste de produits : onglet Envoyer > Produit / Liste de produits (il faut l\'ID du catalogue et les références produit).' })));
+}
+
+/* -------------------------------- Groupes --------------------------------- */
+async function groups(root) {
+  const list = el('div');
+  const subject = el('input', { placeholder: 'Nom du groupe' }), desc = el('input', { placeholder: 'Description (optionnel)' }), approval = el('input', { type: 'checkbox' });
+  async function load() {
+    clear(list);
+    let d;
+    try { d = await api('GET', '/admin/wa/api/groups'); } catch (e) { list.append(el('p', { class: 'mu', text: 'Groupes indisponibles : ' + e.message + (e.hint ? ' — ' + e.hint : '') + ' (l\'API Groupes dépend de l\'accès accordé par Meta à ton numéro).' })); return; }
+    if (!d.groups.length) list.append(el('p', { class: 'mu', text: 'Aucun groupe actif.' }));
+    for (const g of d.groups) {
+      const out = el('div');
+      list.append(el('div', { class: 'card' }, el('b', { text: g.subject || g.id }), el('div', { class: 'mu', text: g.id }), el('div', { class: 'row', style: 'margin-top:8px' },
+        btn('Infos & lien', async () => { clear(out).append(pre(await api('GET', '/admin/wa/api/groups/info?id=' + encodeURIComponent(g.id)))); }),
+        btn('Nouveau lien', async () => { clear(out).append(pre(await api('POST', '/admin/wa/api/groups/reset-invite', { id: g.id }))); }),
+        btn('Écrire', async () => { S.to = g.id; S.group = true; show('send'); }),
+        btn('Supprimer', async () => { if (!confirm('Supprimer ce groupe ?')) return; await api('POST', '/admin/wa/api/groups/delete', { id: g.id }); await load(); }, 'no')), out));
+    }
+  }
+  root.append(el('div', { class: 'card' }, field('Nom', subject), field('Description', desc), el('label', { class: 'chk' }, approval, 'Valider les demandes d\'adhésion'),
+    el('div', { class: 'row', style: 'margin-top:10px' }, btn('Créer le groupe', async () => { const d = await api('POST', '/admin/wa/api/groups', { subject: subject.value, description: desc.value, approval: approval.checked }); toast('Demande envoyée'); root.append(pre(d.result)); await load(); }, 'pri'))), list);
+  await load();
+}
+
+/* -------------------------------- Statut ---------------------------------- */
+async function status(root) {
+  const d = await api('GET', '/admin/wa/api/overview');
+  const kv = (o) => el('div', { class: 'kv' }, Object.entries(o).flatMap(([k, v]) => [el('span', { text: k }), el('b', { text: String(v ?? '—') })]));
+  root.append(el('div', { class: 'card' }, el('h2', { text: 'Numéro' }), d.phone ? kv({ 'Numéro': d.phone.display_phone_number, 'Nom vérifié': d.phone.verified_name, 'Qualité': d.phone.quality_rating, 'Palier d\'envoi': d.phone.messaging_limit_tier, 'Statut du nom': d.phone.name_status, 'Plateforme': d.phone.platform_type, 'Statut': d.phone.status }) : el('p', { class: 'mu', text: (d.phoneError && d.phoneError.error) + ' ' + ((d.phoneError && d.phoneError.hint) || '') })),
+    el('div', { class: 'card' }, el('h2', { text: 'Activité' }), kv({ 'Contacts': d.counts.contacts, 'Messages stockés': d.counts.messages, 'Envoyés (24 h)': d.counts.sent24h })),
+    el('div', { class: 'card' }, el('h2', { text: 'Configuration' }), kv({ 'Phone Number ID': d.config.phoneId, 'WABA ID': d.config.wabaId, 'Version API': d.config.version, 'Numéro pro (wa.me)': d.config.businessNumber, 'Signature webhook': d.config.appSecret ? 'activée' : 'désactivée (ajoute WHATSAPP_APP_SECRET)', 'App ID (photo)': d.config.appId ? 'oui' : 'non', 'Réponses auto': d.config.autoReply ? 'oui' : 'non' })),
+    el('div', { class: 'card row' }, btn('Enregistrer le numéro (erreur 133010)', async () => { toast(JSON.stringify((await api('GET', '/admin/wa-register')).result)); }), btn('Envoyer hello_world au propriétaire', async () => { toast(JSON.stringify((await api('GET', '/admin/wa-test')).result)); })),
+    el('h2', { text: 'Événements Meta récents' }), d.events.length ? d.events.map((e) => el('div', { class: 'card' }, el('b', { text: e.field }), el('span', { class: 'mu', text: ' · ' + fmt(e.created_at) }), el('pre', { text: cut(e.payload, 600) }))) : el('p', { class: 'mu', text: 'Aucun (statuts de modèles, qualité du numéro, appels…).' }));
+}
+
+/* --------------------------------- Shell ---------------------------------- */
+const TABS = [['inbox', 'Inbox', inbox], ['send', 'Envoyer', send], ['tpl', 'Modèles', tpl], ['profile', 'Profil', profile], ['links', 'Liens & QR', links], ['shop', 'Catalogue', shop], ['groups', 'Groupes', groups], ['status', 'Statut', status]];
+const nav = $('#tabs'), main = $('#main');
+function show(name) {
+  for (const b of nav.children) b.setAttribute('aria-selected', String(b.dataset.tab === name));
+  clear(main);
+  const view = TABS.find((t) => t[0] === name)[2];
+  Promise.resolve(view(main)).catch(fail);
+}
+for (const [id, label] of TABS) nav.append(el('button', { type: 'button', role: 'tab', 'data-tab': id, text: label, onclick: () => show(id) }));
+show('inbox');
+</script>
+</html>
