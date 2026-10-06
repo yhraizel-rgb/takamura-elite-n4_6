@@ -986,6 +986,25 @@ app.get('/admin/wa-test', limitAdmin, adminAuth, async (_req, res) => {
   }
 });
 
+// Erreur 133010 « Account not registered » : enregistre le numéro sur l'API Cloud.
+// À ouvrir une seule fois : /admin/wa-register (login admin). Le PIN (6 chiffres) est celui de la validation en deux étapes.
+const WA_PIN = env('WHATSAPP_PIN', '482915');
+app.get('/admin/wa-register', limitAdmin, adminAuth, async (_req, res) => {
+  try {
+    const r = await fetch(`https://graph.facebook.com/${WA_GRAPH_VERSION}/${WA_PHONE_NUMBER_ID}/register`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', pin: WA_PIN }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.ok ? 200 : 502).json({ ok: r.ok, result: data });
+  } catch (e) {
+    console.error('[wa-register]', e.message);
+    res.status(502).json({ ok: false, error: e.message });
+  }
+});
+
 /* ================================== ERRORS ================================= */
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown route.' }));
 // eslint-disable-next-line no-unused-vars
