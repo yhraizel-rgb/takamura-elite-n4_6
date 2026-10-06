@@ -941,6 +941,51 @@ app.post('/webhook/whatsapp', (req, res) => {
   res.sendStatus(200);
 });
 
+/* ========================= WHATSAPP CLOUD API (envoi) ====================== */
+// Valeurs en dur, à la demande (surchargeables par des variables Railway du même nom).
+const WA_TOKEN = env('WHATSAPP_TOKEN', 'EAAds30j9eC4BSgXZASzWFYUWmiZAnVZBZBNgZAcXayfuVqm38wvvyBi5RmLLnWUBBgv7dAM1ZC4K0FDGfR6SnuHNrlft6wcZAZCdjebgRh0KWxzvTvcctsgMLAywGqoO1llfY4V2PDSHW80uEZB5mSxhqplbehMzctLnbdq63NRZCmflgOa1Gn06DcQpDIdHiLgLVyTWur8FxoxHbwjvLQea4Np9YWgJtnQIYp');
+const WA_PHONE_NUMBER_ID = env('WHATSAPP_PHONE_NUMBER_ID', '1370755836117468');
+const WA_GRAPH_VERSION = env('WHATSAPP_GRAPH_VERSION', 'v23.0');
+const WA_TEST_TO = '237679064679'; // destinataire fixe du test /admin/wa-test
+
+async function waSend(payload) {
+  const r = await fetch(`https://graph.facebook.com/${WA_GRAPH_VERSION}/${WA_PHONE_NUMBER_ID}/messages`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${WA_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messaging_product: 'whatsapp', ...payload }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || `WhatsApp API ${r.status}`);
+    err.status = r.status;
+    err.details = data.error || null;
+    throw err;
+  }
+  return data;
+}
+const waDigits = (n) => String(n || '').replace(/\D/g, ''); // 237679064679, sans « + »
+
+// Texte libre : possible seulement dans les 24 h qui suivent un message du client.
+function sendWhatsAppText(to, body) {
+  return waSend({ to: waDigits(to), type: 'text', text: { body: String(body).slice(0, 4000) } });
+}
+// Modèle approuvé : seul moyen d'écrire en premier (hello_world existe d'office sur le numéro test).
+function sendWhatsAppTemplate(to, name = 'hello_world', lang = 'en_US') {
+  return waSend({ to: waDigits(to), type: 'template', template: { name, language: { code: lang } } });
+}
+
+// Test depuis le téléphone : ouvre /admin/wa-test (login admin) → envoie hello_world à WA_TEST_TO.
+app.get('/admin/wa-test', limitAdmin, adminAuth, async (_req, res) => {
+  try {
+    const out = await sendWhatsAppTemplate(WA_TEST_TO);
+    res.json({ ok: true, to: WA_TEST_TO, result: out });
+  } catch (e) {
+    console.error('[wa-test]', e.message);
+    res.status(502).json({ ok: false, error: e.message, details: e.details || null });
+  }
+});
+
 /* ================================== ERRORS ================================= */
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown route.' }));
 // eslint-disable-next-line no-unused-vars
