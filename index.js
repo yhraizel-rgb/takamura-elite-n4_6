@@ -30,8 +30,8 @@ const TURSO_AUTH_TOKEN = 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpY
 
 const BREVO_API_KEY = env('BREVO_API_KEY'); // ← seule valeur restée en env, comme demandé
 const BREVO_SENDER_EMAIL = 'yhrespon@gmail.com'; // expéditeur vérifié dans Brevo
-const ADMIN_EMAIL = 'yenohyenoh209@gmail.com';
-const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
+const ADMIN_EMAIL = 'takamura2026@gmail.com';
+const ADMIN_PASSWORD = 'TAKAMURA2026';
 
 // Recharge de portefeuille via Money Fusion — lien de paiement unique, fourni par l'admin.
 // Le client paie sur ce lien (tous moyens acceptés par Money Fusion), puis envoie la capture
