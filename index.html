@@ -1109,7 +1109,6 @@ function drawWiz() {
     setTimeout(() => ta.focus(), 60);
   } else {
     const sendBtn = h('button', { class: 'btn primary', type: 'button', id: 'submitBtn' }, h('span', { class: 'sp-label', text: 'Submit report' }));
-    const mailBtn = h('button', { class: 'btn ghost', type: 'button', id: 'mailBtn' }, h('span', { class: 'sp-label', text: 'Send from your own email app' }));
     const optBtns = [];
     const toChips = h('div', { class: 'to-chips' });
     const allBtn = h('button', { type: 'button', class: 'to-all' });
@@ -1137,8 +1136,8 @@ function drawWiz() {
       h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), toBar, destWrap,
       h('div', { class: 'blk-t', text: 'Summary' }),
       h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
-      err, nav(h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end' }, mailBtn, sendBtn)),
-      h('p', { class: 'hint', style: 'text-align:right;font-size:11.5px;margin-top:8px' }, "\u201cSubmit report\u201d has our server email the addresses above for you. \u201cSend from your own email app\u201d opens your mail client with everything pre-filled, and you send it yourself from your real address — nothing leaves our server."));
+      err, nav(sendBtn),
+      h('p', { class: 'hint', style: 'text-align:right;font-size:11.5px;margin-top:8px' }, "\u201cSubmit report\u201d has our server email the addresses above for you. When it\u2019s done, your email app opens with everything pre-filled so you can also send it yourself from your real address."));
     const openMailFallback = (d) => {
       // Certaines applis mail sur Android perdent subject/body (gardent juste les destinataires) quand mailto: est
       // ouvert via location.href. Un <a> cliqué est plus fiable. On garde aussi objet + message en clair en secours
@@ -1147,26 +1146,6 @@ function drawWiz() {
       const a = document.createElement('a'); a.href = mailto; a.style.display = 'none';
       document.body.appendChild(a); a.click(); a.remove();
       R.mailFallback = { to: d.to, subject: d.subject, body: d.body };
-    };
-    const doSend = async (mode, btn, labelWhenBusy) => {
-      if (!R.dests.size) { err.textContent = 'Choose at least one destination.'; return; }
-      [sendBtn, mailBtn].forEach((b) => { b.disabled = true; });
-      btn.classList.add('busy'); btn.setAttribute('aria-busy', 'true'); btn.querySelector('.sp-label').textContent = labelWhenBusy;
-      try {
-        const d = await api('/api/report', { method: 'POST', body: { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests], mode } });
-        try { S.me = await api('/api/me'); } catch {}
-        // Étape 1 (envoi serveur ou juste préparation du rapport) terminée → étape 2 : on ouvre l'appli mail tout de
-        // suite après, avec le même contenu, que le bouton cliqué soit « Submit report » ou « Send from your own email app ».
-        openMailFallback(d);
-        R.done = d; drawWiz();
-      } catch (e) {
-        [sendBtn, mailBtn].forEach((b) => { b.disabled = false; b.classList.remove('busy'); b.setAttribute('aria-busy', 'false'); });
-        sendBtn.querySelector('.sp-label').textContent = 'Submit report';
-        mailBtn.querySelector('.sp-label').textContent = 'Send from your own email app';
-        if (e.status === 401) { forget(); return showView('auth'); }
-        if (e.status === 403) { toast(e.message, true); return route(); }
-        err.textContent = e.message;
-      }
     };
     // Envoi par le serveur : écran « terminal » avec barre de progression suivant les étapes réelles.
     const doSendLive = async () => {
@@ -1184,6 +1163,8 @@ function drawWiz() {
         });
         await ui.finish();
         try { S.me = await api('/api/me'); } catch {}
+        // Étape 2 : une fois l'envoi serveur terminé, on renvoie l'utilisateur dans son appli mail (même contenu pré-rempli).
+        openMailFallback(d);
         R.done = d; drawWiz();
       } catch (e) {
         await ui.fail();
@@ -1193,7 +1174,6 @@ function drawWiz() {
       }
     };
     sendBtn.addEventListener('click', doSendLive);
-    mailBtn.addEventListener('click', () => doSend('manual', mailBtn, 'Opening your email app...'));
   }
 }
 function radios(items, cur, onPick, two) {
@@ -1222,7 +1202,7 @@ function numberPill(c) {
   return h('span', { class: 'pill ' + (st ? st[1] : ''), title: tip, text: st ? st[0] : 'EN ATTENTE' });
 }
 function drawDone(box) {
-  const d = S.rep.done, manual = d.mode === 'manual', ok = manual ? true : d.sent > 0;
+  const d = S.rep.done, manual = false, ok = d.sent > 0;
   const cid = h('span', { text: d.caseId });
   const msg = manual
     ? 'Your email app should have opened with everything pre-filled. Send it from there to finish — keep your case number for reference.'
@@ -1233,6 +1213,12 @@ function drawDone(box) {
     h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: msg }),
     ok ? h('p', { class: 'hint', style: 'margin:6px auto 0;max-width:420px;font-size:12px;opacity:.8', text: d.disclaimer || 'These are public support addresses, not an official Meta API — monitoring and processing are not guaranteed.' }) : null,
     d.check ? targetStatusBlock(d.check) : null,
+    // Si l'appli mail ne s'est pas ouverte toute seule (geste utilisateur expiré après l'envoi), ce bouton la rouvre.
+    S.rep.mailFallback ? h('button', { class: 'btn primary', type: 'button', style: 'margin:16px auto 0', onclick: () => {
+      const m = S.rep.mailFallback;
+      const a = document.createElement('a'); a.href = 'mailto:' + m.to.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(m.subject) + '&body=' + encodeURIComponent(m.body);
+      a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+    }, text: 'Open my email app' }) : null,
     // Secours : si l'appli mail n'a pas repris l'objet/le message (ou ne s'est pas ouverte), on les montre ici copiables.
     S.rep.mailFallback ? h('div', { class: 'card', style: 'margin:16px auto 0;max-width:420px;text-align:left;padding:14px 16px' },
       h('p', { class: 'hint', style: 'margin:0 0 10px', text: "If your email app didn't open with everything filled in, copy it below and paste it yourself." }),
