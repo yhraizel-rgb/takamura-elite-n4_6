@@ -38,6 +38,15 @@ const ADMIN_PASSWORD = 'TAKAMURA-ADMIN-2026';
 // d'écran du paiement. Un admin vérifie la preuve et approuve manuellement le crédit du solde.
 const MONEY_FUSION_URL = 'https://my.moneyfusion.net/69baa0c5d64e43f8715d8bf8';
 const WALLET_CURRENCY = env('WALLET_CURRENCY', 'FCFA');
+// Vérification de numéro (API Baron0) — clé en dur comme le reste de la config ; elle reste côté serveur, jamais envoyée au navigateur.
+const BANCHECK_API_BASE = 'https://baron0.com';
+const BANCHECK_API_KEY = 'bk_v1_ggd2nwDLgDhNo6kF_lKz2hTdHxNuZbVJn-yKZDkwkE5EMQjHLxCoxJ_46QVv6Wi9vPb2p2cdr6YvhR1IcpUNEfugPZsWZnKN1_SQdY8LjFDN4rjj-OFmWKZNDc07OEiuXKMznAuXCeO4j6CAoJwSJ6_Zk4AF8xWN4Y3k8O_AqSxPo90u85nBdn_X9IZqHpufCBesz9axVaV5bmAdZ1e6rKck8oZBzeT4ronYvKVATs9Vw071YRAFfZjAnf9TqOrtRwHx1cnysrWPiKeWPHMDiiTYsdfnOzdQZdjWu3Xs1wu-KEoCZVst7q0_obwDbfbq9JRpoGyd_LVM9k_FO_mkSJlr_OeqDKEpENkRuNMIC6_7RuJV1m_CthsyyJD0trlmb6bd3cAddmaFfttJCObnBzqFWRG4yJXp-g3PKjqHprsb3DTuVwPvs5YO7JAR3AMXJ3BXv3-1Ja86-oHmjzGgIONf0nbcRfMVjes8rE0LevdwmxG8IWlTf1p7kvKpQkfRSzfQ6c70xMClx6NZHviKcRY9tbY4bIvf5dqgUQ4';
+const CHECK_TIMEOUT_MS = 15000;
+// Surveillance automatique des numéros ciblés par les signalements.
+const WATCH_INTERVAL_MS = 15 * 60 * 1000; // revérification toutes les 15 min
+const WATCH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // un numéro est suivi 7 jours après le dernier signalement (arrêt dès qu'il est BANNI)
+const WATCH_DELAY_MS = 400; // pause entre deux appels API
+const WATCH_REUSE_MS = 60 * 1000; // un numéro déjà vérifié il y a moins d'1 min n'est pas redemandé à l'API
 const MIN_USABLE_BALANCE = 1000; // solde minimum pour pouvoir utiliser la plateforme (soumettre un signalement)
 const MIN_TOPUP_AMOUNT = 100; // montant minimum d'une demande de recharge
 const MAX_TOPUP_AMOUNT = 2000000; // garde-fou anti-erreur de saisie
@@ -173,6 +182,29 @@ async function initDb() {
     decided_at INTEGER
   )`);
 
+  // Historique des vérifications de numéro (résultat normalisé stocké en JSON).
+  await db.execute(`CREATE TABLE IF NOT EXISTS checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    number TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+
+  // Numéros ciblés par les signalements, suivis automatiquement (un seul enregistrement par numéro, chiffres seuls).
+  await db.execute(`CREATE TABLE IF NOT EXISTS watched_numbers (
+    number TEXT PRIMARY KEY,
+    status TEXT,
+    result TEXT,
+    first_seen INTEGER NOT NULL,
+    last_report_at INTEGER NOT NULL,
+    checked_at INTEGER,
+    changed_at INTEGER,
+    check_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0
+  )`);
+
   await ensureColumn('auth_tokens', 'user_id', 'INTEGER');
   await ensureColumn('auth_tokens', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn('reports', 'user_id', 'INTEGER');
@@ -186,6 +218,8 @@ async function initDb() {
 
   for (const sql of [
     `CREATE INDEX IF NOT EXISTS idx_reports_user ON reports(user_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_watched_due ON watched_numbers(status, last_report_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_checks_user ON checks(user_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_topups_user ON topups(user_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_topups_status ON topups(status, created_at)`,
   ]) {
@@ -755,10 +789,23 @@ app.post('/api/report', limitReport, async (req, res) => {
       sql: `INSERT INTO reports (user_id, case_id, category, severity, wa_number, message, created_at, email_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [user.id, caseId, category, severity, waNumber, message, Date.now(), mode === 'manual' ? `manual/${dests.length}` : `${ok}/${dests.length}`],
     });
-    const payload = {
-      mode, sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER,
-      ...(mode === 'manual' ? { to: dests, subject, body } : {}),
-    };
+    // Statut du numéro ciblé : enregistré dans la surveillance (revérifié toutes les 15 min) et vérifié tout de suite.
+    let check = null;
+    const digits = mode === 'manual' || ok > 0 ? targetDigits(waNumber) : null;
+    if (digits) {
+      emit({ t: 'checking' });
+      try {
+        const w = await watchTarget(digits);
+        check = { status: w.result.status, banType: w.result.banType, violation: w.result.violation, checkedAt: w.checkedAt };
+      } catch (e) {
+        console.error('[report check]', e.message);
+        check = { status: 'error' }; // la surveillance réessaiera au prochain cycle
+      }
+      emit({ t: 'check', status: check.status });
+    }
+    // to/subject/body renvoyés dans tous les cas : après l'envoi auto (étape 1), le front ouvre aussi
+    // l'appli mail (étape 2) avec le même contenu, pas seulement en mode manuel.
+    const payload = { mode, sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER, to: dests, subject, body, check };
     if (stream) { emit({ t: 'done', ...payload }); return res.end(); }
     res.json(payload);
   } catch (e) {
@@ -779,6 +826,15 @@ app.get('/api/reports', async (req, res) => {
       sql: `SELECT case_id, category, severity, wa_number, created_at, email_status FROM reports WHERE user_id = ? ORDER BY created_at DESC LIMIT 100`,
       args: [user.id],
     });
+    const nums = [...new Set(r.rows.map((x) => targetDigits(x.wa_number)).filter(Boolean))];
+    const watch = new Map();
+    if (nums.length) {
+      const w = await db.execute({ sql: `SELECT number, status, result, checked_at, changed_at FROM watched_numbers WHERE number IN (${nums.map(() => '?').join(',')})`, args: nums });
+      for (const row of w.rows) {
+        let d = {}; try { d = JSON.parse(row.result || '{}'); } catch (_) { /* ignoré */ }
+        watch.set(row.number, { status: row.status || null, banType: d.banType || null, violation: d.violation || null, checkedAt: row.checked_at ? Number(row.checked_at) : null, changedAt: row.changed_at ? Number(row.changed_at) : null });
+      }
+    }
     res.json({
       reports: r.rows.map((x) => {
         const raw = String(x.email_status || '0/0');
@@ -786,7 +842,7 @@ app.get('/api/reports', async (req, res) => {
         const [ok, total] = raw.replace('manual/', '').split('/').map(Number);
         return {
           caseId: x.case_id, createdAt: Number(x.created_at), category: x.category, severity: x.severity,
-          target: x.wa_number, status: manual ? 'manual' : ok > 0 ? 'sent' : 'failed', delivered: ok || 0, total: total || 0,
+          target: x.wa_number, status: manual ? 'manual' : ok > 0 ? 'sent' : 'failed', delivered: ok || 0, total: total || 0, check: watch.get(targetDigits(x.wa_number)) || null,
         };
       }),
     });
@@ -1013,6 +1069,166 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
 });
 
 /* ================================== ERRORS ================================= */
+/* ======================= VÉRIFICATION DE NUMÉRO (Baron0) ======================= */
+// Champs connus de l'API ; tout autre champ simple renvoyé par l'API est transmis tel quel dans `extra`,
+// pour que l'interface affiche tout ce que ton plan Baron0 fournit (sans qu'il faille modifier le code).
+const CHECK_KNOWN_KEYS = new Set(['banned', 'ban_type', 'banType', 'mod_block', 'modBlock', 'violation', 'category',
+  'appeal', 'eu', 'banned_at', 'bannedAt', 'appeal_filed', 'appealFiled', 'number', 'phone']);
+const checkScalar = (v) => (v !== null && typeof v === 'object' ? JSON.stringify(v).slice(0, 300) : typeof v === 'string' ? v.slice(0, 300) : v);
+
+function normalizeCheck(number, data) {
+  const d = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const pick = (...keys) => { for (const k of keys) if (d[k] !== undefined && d[k] !== null && d[k] !== '') return checkScalar(d[k]); return null; };
+  const banType = pick('ban_type', 'banType');
+  const modBlock = d.mod_block === true || d.modBlock === true || (typeof banType === 'string' && /mod/i.test(banType));
+  const banned = d.banned === true;
+  const status = banned ? 'banned' : modBlock ? 'restricted' : d.banned === false ? 'normal' : 'unknown';
+  const extra = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (Object.keys(extra).length >= 20) break;
+    if (CHECK_KNOWN_KEYS.has(k) || v === undefined || v === null || v === '' || !/^[A-Za-z0-9_.-]{1,40}$/.test(k)) continue;
+    extra[k] = checkScalar(v);
+  }
+  return {
+    number, status, banned, modBlock, banType,
+    violation: pick('violation'), category: pick('category'), appeal: pick('appeal'), eu: pick('eu'),
+    bannedAt: pick('banned_at', 'bannedAt'), appealFiled: pick('appeal_filed', 'appealFiled'), extra,
+  };
+}
+
+// Appel unique à l'API Baron0 (utilisé par la page « Vérifier », l'envoi des signalements et la surveillance).
+async function callBanCheck(number, timeoutMs = CHECK_TIMEOUT_MS) {
+  let apiRes, data = null;
+  try {
+    apiRes = await fetch(`${BANCHECK_API_BASE}/api/v2/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + BANCHECK_API_KEY },
+      body: JSON.stringify({ number }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    data = await apiRes.json().catch(() => null);
+  } catch (e) {
+    const err = new Error('network: ' + e.message); err.code = 'network'; throw err;
+  }
+  if (!apiRes.ok) { // erreurs problem+json : { type, title, status, detail, instance, requestId }
+    const err = new Error(`API ${apiRes.status} ${(data && (data.title || data.detail)) || ''} ${(data && data.requestId) || ''}`.trim());
+    err.code = 'api'; err.apiStatus = apiRes.status; err.detail = data && data.detail; throw err;
+  }
+  return normalizeCheck(number, data);
+}
+
+app.post('/api/checkban', async (req, res) => {
+  try {
+    const user = await getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated.' });
+    const balance = await getBalance(user.id);
+    if (balance < MIN_USABLE_BALANCE) return res.status(403).json({ error: `Solde insuffisant. Rechargez au moins ${money(MIN_USABLE_BALANCE)} ${WALLET_CURRENCY} pour utiliser la plateforme.` });
+
+    const digits = String(req.body?.phone || '').replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) return res.status(400).json({ error: 'Numéro invalide (format international, ex. +237 6XX XXX XXX).' });
+    const number = '+' + digits;
+
+    let result;
+    try { result = await callBanCheck(number); }
+    catch (e) {
+      console.error('[checkban]', e.message);
+      if (e.code === 'api' && (e.apiStatus === 400 || e.apiStatus === 422)) return res.status(400).json({ error: e.detail || 'Numéro refusé par le service.' });
+      if (e.code === 'api' && e.apiStatus === 429) return res.status(503).json({ error: 'Service surchargé, réessayez dans un instant.' });
+      return res.status(502).json({ error: e.code === 'network' ? 'Impossible de contacter le service de vérification.' : 'Le service de vérification est indisponible pour le moment.' });
+    }
+    const ins = await db.execute({
+      sql: `INSERT INTO checks (user_id, number, status, result, created_at) VALUES (?, ?, ?, ?, ?)`,
+      args: [user.id, number, result.status, JSON.stringify(result), Date.now()],
+    });
+    res.json({ ok: true, id: Number(ins.lastInsertRowid || 0), createdAt: Date.now(), result });
+  } catch (e) {
+    console.error('[checkban]', e.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+/* ================= SURVEILLANCE DES NUMÉROS CIBLÉS (après envoi + toutes les 15 min) ================= */
+// Extrait les chiffres d'une cible : numéro brut, lien wa.me/… ou api.whatsapp.com/send?phone=… (liens de groupe : non vérifiables).
+function targetDigits(t) {
+  const s = String(t || '').trim();
+  const m = s.match(/(?:wa\.me\/|[?&]phone=)\+?(\d{8,15})/i);
+  if (m) return m[1];
+  if (/^\+?[0-9 ()\-]{6,20}$/.test(s)) { const d = s.replace(/\D/g, ''); return d.length >= 8 && d.length <= 15 ? d : null; }
+  return null;
+}
+
+// Vérifie un numéro suivi et enregistre le résultat ; `changed` = le statut a changé depuis la vérification précédente.
+async function checkWatched(digits, timeoutMs = CHECK_TIMEOUT_MS) {
+  const result = await callBanCheck('+' + digits, timeoutMs);
+  const now = Date.now();
+  const prev = await db.execute({ sql: `SELECT status FROM watched_numbers WHERE number = ?`, args: [digits] });
+  const prevStatus = prev.rows[0] ? prev.rows[0].status : null;
+  const changed = !!prevStatus && prevStatus !== result.status;
+  await db.execute({
+    sql: `UPDATE watched_numbers SET status = ?, result = ?, checked_at = ?, changed_at = CASE WHEN ? = 1 THEN ? ELSE changed_at END, check_count = check_count + 1, error_count = 0 WHERE number = ?`,
+    args: [result.status, JSON.stringify(result), now, changed ? 1 : 0, now, digits],
+  });
+  return { result, checkedAt: now, changed };
+}
+
+// Appelé après chaque envoi : enregistre le numéro dans la surveillance puis le vérifie tout de suite.
+async function watchTarget(digits) {
+  const now = Date.now();
+  await db.execute({
+    sql: `INSERT INTO watched_numbers (number, first_seen, last_report_at) VALUES (?, ?, ?) ON CONFLICT(number) DO UPDATE SET last_report_at = excluded.last_report_at`,
+    args: [digits, now, now],
+  });
+  const cur = await db.execute({ sql: `SELECT status, result, checked_at FROM watched_numbers WHERE number = ?`, args: [digits] });
+  const row = cur.rows[0];
+  if (row && row.status && row.checked_at && now - Number(row.checked_at) < WATCH_REUSE_MS) {
+    try { return { result: JSON.parse(row.result), checkedAt: Number(row.checked_at), changed: false }; } catch (_) { /* résultat illisible : on revérifie */ }
+  }
+  return checkWatched(digits, 8000);
+}
+
+let watchRunning = false;
+async function runWatchCycle() {
+  if (watchRunning) return;
+  watchRunning = true;
+  try {
+    const due = await db.execute({
+      sql: `SELECT number FROM watched_numbers WHERE last_report_at > ? AND (status IS NULL OR status != 'banned') ORDER BY COALESCE(checked_at, 0) ASC`,
+      args: [Date.now() - WATCH_MAX_AGE_MS],
+    });
+    let done = 0, changed = 0;
+    for (const row of due.rows) {
+      try { const x = await checkWatched(row.number); done++; if (x.changed) changed++; }
+      catch (e) {
+        console.error('[watch]', row.number, e.message);
+        await db.execute({ sql: `UPDATE watched_numbers SET error_count = error_count + 1 WHERE number = ?`, args: [row.number] }).catch(() => {});
+        if (e.code === 'api' && [401, 403, 429].includes(e.apiStatus)) break; // clé refusée ou quota atteint : inutile d'insister ce cycle
+      }
+      await new Promise((resolve) => setTimeout(resolve, WATCH_DELAY_MS));
+    }
+    if (due.rows.length) console.log(`[watch] ${done}/${due.rows.length} checked, ${changed} status change(s)`);
+  } catch (e) {
+    console.error('[watch cycle]', e.message);
+  } finally {
+    watchRunning = false;
+  }
+}
+
+app.get('/api/checks', limitPayStatus, async (req, res) => {
+  try {
+    const user = await getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'Not authenticated.' });
+    const r = await db.execute({ sql: `SELECT id, number, status, result, created_at FROM checks WHERE user_id = ? ORDER BY created_at DESC LIMIT 20`, args: [user.id] });
+    const checks = r.rows.map((x) => {
+      let result = null; try { result = JSON.parse(x.result); } catch (_) { /* ligne illisible : ignorée */ }
+      return { id: Number(x.id), number: x.number, status: x.status, createdAt: Number(x.created_at), result };
+    });
+    res.json({ checks });
+  } catch (e) {
+    console.error('[checks]', e.message);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown route.' }));
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
@@ -1026,6 +1242,8 @@ app.use((err, _req, res, _next) => {
 (async () => {
   await initDb();
   app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review)`));
+  setInterval(() => { runWatchCycle(); }, WATCH_INTERVAL_MS);
+  console.log(`[watch] target numbers re-checked every ${WATCH_INTERVAL_MS / 60000} min`);
 })().catch((e) => {
   console.error('[BOOT] Startup failed:', e && e.message);
   process.exit(1);

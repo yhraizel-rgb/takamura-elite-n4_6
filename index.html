@@ -242,9 +242,10 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .shell{grid-template-columns:1fr}.side{display:none}
   .top{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20;background:rgba(10,10,11,.85);backdrop-filter:blur(12px);padding-top:calc(14px + env(safe-area-inset-top))}
   .main{padding-bottom:110px}
-  .bar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(12,12,14,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+  .bar{display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(12,12,14,.92);backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
   .bar button{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 2px;color:var(--tx3);font-size:10.5px;border-radius:10px;min-height:52px}
   .bar button[aria-current=page]{color:var(--gold2)}
+  .bar button{min-width:0;font-size:10px}
   .bar button svg{width:21px;height:21px}
   .nav-btns .btn{flex:1}
   thead{display:none}
@@ -323,6 +324,7 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
     <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
     <symbol id="i-mark" viewBox="0 0 24 24"><path d="M12 2.5 20 7v10l-8 4.5L4 17V7z"/><path d="M8.5 9.5h7M12 9.5v7"/></symbol>
   </defs>
 </svg>
@@ -827,7 +829,7 @@ function pollMe() {
 }
 
 /* ============================== APP SHELL ============================== */
-const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['history', 'History', 'history'], ['wallet', 'Portefeuille', 'lock'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
+const NAV = [['overview', 'Overview', 'overview'], ['report', 'Report', 'report'], ['check', 'Vérifier', 'search'], ['history', 'History', 'history'], ['wallet', 'Portefeuille', 'lock'], ['security', 'Security', 'shield'], ['account', 'Account', 'user']];
 let balanceTimer = null;
 function updateBalanceUI() {
   const bal = S.demo ? 'Demo mode' : `${fmtMoney(S.me.balance)} FCFA`;
@@ -855,7 +857,7 @@ function go(s) {
   document.querySelectorAll('#sideNav button,#bar button').forEach((b) => { if (b.dataset.s === s) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   const m = clear($('main')); m.classList.remove('step-in'); void m.offsetHeight; m.classList.add('step-in');
   window.scrollTo(0, 0);
-  ({ overview: renderOverview, report: renderReport, history: renderHistory, wallet: renderWallet, security: renderSecurity, account: renderAccount })[s](m);
+  ({ overview: renderOverview, report: renderReport, check: renderCheck, history: renderHistory, wallet: renderWallet, security: renderSecurity, account: renderAccount })[s](m);
   const t = m.querySelector('h1'); if (t) { t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); }
 }
 const greeting = () => { const hr = new Date().getHours(); return hr < 5 ? 'Good evening,' : hr < 12 ? 'Good morning,' : hr < 18 ? 'Good afternoon,' : 'Good evening,'; };
@@ -977,6 +979,70 @@ function drawSendPanel(box) {
   };
 }
 
+/* ========================= NUMBER CHECK (statut d'un numéro) ========================= */
+const CHECK_STATUS = {
+  normal: ['NORMAL', 'ok', 'Aucune restriction détectée sur ce numéro.', 'L’aura demeure.'],
+  banned: ['BANNI', 'err', 'Ce numéro est banni de WhatsApp.', 'Le silence parle.'],
+  restricted: ['RESTREINT', 'gold', 'Ce numéro fait l’objet d’un blocage de modération.', ''],
+  unknown: ['INDÉTERMINÉ', '', 'Le service n’a pas renvoyé de statut clair pour ce numéro.', ''],
+};
+const CHECK_LABELS = { banType: 'Type de ban', violation: 'Violation', category: 'Catégorie', appeal: 'Appel possible', eu: 'Région UE', bannedAt: 'Date du ban', appealFiled: 'Appel déposé' };
+function checkVal(k, v) {
+  if (typeof v === 'boolean') return v ? 'Oui' : 'Non';
+  if (/At$/.test(k) && typeof v === 'string' && !Number.isNaN(Date.parse(v))) return new Date(v).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
+  return String(v);
+}
+function checkCard(r, when) {
+  const st = CHECK_STATUS[r.status] || CHECK_STATUS.unknown;
+  const kv = [];
+  Object.entries(CHECK_LABELS).forEach(([k, label]) => { if (r[k] !== null && r[k] !== undefined) kv.push(h('span', { text: label }), h('b', { text: checkVal(k, r[k]) })); });
+  Object.entries(r.extra || {}).forEach(([k, v]) => kv.push(h('span', { text: k.replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase()) }), h('b', { text: checkVal(k, v) })));
+  return h('div', { class: 'card step-in', role: 'status', style: 'margin-top:18px' },
+    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap' }, h('b', { text: r.number }), h('span', { class: 'pill ' + st[1], text: st[0] })),
+    h('p', { style: 'margin:12px 0 4px', text: st[2] }),
+    st[3] ? h('p', { class: 'hint', style: 'font-style:italic', text: st[3] }) : null,
+    kv.length ? h('div', { class: 'kv', style: 'margin-top:14px' }, kv) : null,
+    when ? h('p', { class: 'hint', style: 'margin-top:12px', text: 'Vérifié le ' + fmtDate(when) }) : null);
+}
+function renderCheck(m) {
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Vérifier un numéro' })),
+    h('div', { class: 'card' },
+      h('p', { class: 'hint', style: 'margin-bottom:14px', text: 'Entrez un numéro WhatsApp au format international pour connaître son statut (normal, restreint ou banni) et les détails fournis par le service.' }),
+      h('div', { class: 'inp' }, h('input', { id: 'chkNum', type: 'tel', inputmode: 'tel', placeholder: '+237 6XX XXX XXX', autocomplete: 'off', maxlength: '24', 'aria-label': 'Numéro à vérifier', 'aria-describedby': 'chkNum-err' })),
+      h('div', { class: 'ferr', id: 'chkNum-err', role: 'alert' }),
+      h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', type: 'button', id: 'chkGo' }, h('span', { class: 'sp-label', text: 'Vérifier' })))),
+    h('div', { id: 'chkOut' }),
+    h('div', { class: 'sec-h' }, h('h3', { text: 'Vérifications récentes' })),
+    h('div', { class: 'list', id: 'chkHist' }, h('div', { class: 'sk' }), h('div', { class: 'sk' })));
+  const inp = $('chkNum'), btn = $('chkGo'), out = $('chkOut');
+  const loadHist = () => api('/api/checks').then((d) => {
+    const box = $('chkHist'); if (!box) return; clear(box);
+    if (!d.checks.length) return box.append(h('div', { class: 'empty', text: 'Aucune vérification pour le moment.' }));
+    d.checks.forEach((c) => {
+      const st = CHECK_STATUS[c.status] || CHECK_STATUS.unknown;
+      box.append(h('div', { class: 'item', style: c.result ? 'cursor:pointer' : '', role: c.result ? 'button' : null, tabindex: c.result ? '0' : null,
+        onclick: () => { if (c.result) { clear(out).append(checkCard(c.result, c.createdAt)); out.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } } },
+        h('div', { class: 'a' }, h('b', { text: c.number }), h('span', { text: fmtDate(c.createdAt) })), h('span', { class: 'pill ' + st[1], text: st[0] })));
+    });
+  }).catch(() => { const box = $('chkHist'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: 'Impossible de charger l’historique.' })); } });
+  const run = async () => {
+    const digits = inp.value.replace(/\D/g, '');
+    if (digits.length < 8 || digits.length > 15) { inp.setAttribute('aria-invalid', 'true'); $('chkNum-err').textContent = 'Entrez un numéro valide au format international.'; return; }
+    inp.removeAttribute('aria-invalid'); $('chkNum-err').textContent = ''; setLoading(btn, true);
+    try {
+      const d = await api('/api/checkban', { method: 'POST', body: { phone: '+' + digits } });
+      clear(out).append(checkCard(d.result, d.createdAt)); loadHist();
+    } catch (e) {
+      if (e.status === 401) { forget(); return showView('auth'); }
+      $('chkNum-err').textContent = e.message;
+    } finally { setLoading(btn, false); }
+  };
+  btn.addEventListener('click', run);
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+  inp.addEventListener('input', () => { inp.removeAttribute('aria-invalid'); $('chkNum-err').textContent = ''; });
+  loadHist(); setTimeout(() => inp.focus(), 60);
+}
+
 /* ============================= REPORT WIZARD ============================= */
 const STEPS = ['Category', 'Severity', 'Target', 'Evidence', 'Review'];
 const WA_RE = /^(\+?[0-9 ()\-]{6,20}|https?:\/\/(wa\.me|chat\.whatsapp\.com|api\.whatsapp\.com)\/\S{1,150})$/i;
@@ -1073,6 +1139,15 @@ function drawWiz() {
       h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
       err, nav(h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end' }, mailBtn, sendBtn)),
       h('p', { class: 'hint', style: 'text-align:right;font-size:11.5px;margin-top:8px' }, "\u201cSubmit report\u201d has our server email the addresses above for you. \u201cSend from your own email app\u201d opens your mail client with everything pre-filled, and you send it yourself from your real address — nothing leaves our server."));
+    const openMailFallback = (d) => {
+      // Certaines applis mail sur Android perdent subject/body (gardent juste les destinataires) quand mailto: est
+      // ouvert via location.href. Un <a> cliqué est plus fiable. On garde aussi objet + message en clair en secours
+      // (bouton « copier » affiché à l'écran suivant), au cas où l'appli mail ne les reprenne pas.
+      const mailto = 'mailto:' + d.to.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(d.subject) + '&body=' + encodeURIComponent(d.body);
+      const a = document.createElement('a'); a.href = mailto; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove();
+      R.mailFallback = { to: d.to, subject: d.subject, body: d.body };
+    };
     const doSend = async (mode, btn, labelWhenBusy) => {
       if (!R.dests.size) { err.textContent = 'Choose at least one destination.'; return; }
       [sendBtn, mailBtn].forEach((b) => { b.disabled = true; });
@@ -1080,10 +1155,9 @@ function drawWiz() {
       try {
         const d = await api('/api/report', { method: 'POST', body: { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests], mode } });
         try { S.me = await api('/api/me'); } catch {}
-        if (mode === 'manual') {
-          const mailto = 'mailto:' + d.to.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(d.subject) + '&body=' + encodeURIComponent(d.body);
-          window.location.href = mailto;
-        }
+        // Étape 1 (envoi serveur ou juste préparation du rapport) terminée → étape 2 : on ouvre l'appli mail tout de
+        // suite après, avec le même contenu, que le bouton cliqué soit « Submit report » ou « Send from your own email app ».
+        openMailFallback(d);
         R.done = d; drawWiz();
       } catch (e) {
         [sendBtn, mailBtn].forEach((b) => { b.disabled = false; b.classList.remove('busy'); b.setAttribute('aria-busy', 'false'); });
@@ -1104,6 +1178,8 @@ function drawWiz() {
           if (ev.t === 'start') { ui.target(18); ui.line('> session verified', 'ok'); ui.line(`> case ${ev.caseId} created`, 'ok'); ui.line(`> report packaged · ${ev.total} destination${ev.total > 1 ? 's' : ''}`, 'ok'); }
           else if (ev.t === 'step') { ui.target(18 + (72 * ev.done) / ev.total); ui.line(`${ev.ok ? '[ OK ]' : '[FAIL]'} ${ev.dest}`, ev.ok ? 'ok' : 'bad'); }
           else if (ev.t === 'saving') { ui.target(95); ui.line('> writing case to history ...', 'dim'); }
+          else if (ev.t === 'checking') { ui.target(97); ui.line('> checking target status ...', 'dim'); }
+          else if (ev.t === 'check') { const cs = CHECK_STATUS[ev.status]; ui.line(`> target status · ${cs ? cs[0] : 'UNAVAILABLE (auto retry in 15 min)'}`, ev.status === 'normal' ? 'ok' : ev.status === 'error' || ev.status === 'unknown' ? 'dim' : 'bad'); }
           else if (ev.t === 'done') { ui.line(`> done · ${ev.sent}/${ev.total} delivered`, ev.sent ? 'ok' : 'bad'); }
         });
         await ui.finish();
@@ -1130,17 +1206,40 @@ function radios(items, cur, onPick, two) {
   });
   return wrap;
 }
+const WATCH_NOTE = 'Revérifié automatiquement toutes les 15 min pendant 7 jours (arrêt dès que le numéro est banni).';
+function targetStatusBlock(c) {
+  const st = CHECK_STATUS[c.status];
+  const det = [c.banType, c.violation].filter(Boolean).join(' · ');
+  return h('div', { style: 'margin:16px auto 0;max-width:420px' },
+    h('div', { class: 'eyebrow', text: 'STATUT DU NUMÉRO CIBLE' }),
+    h('div', { style: 'margin-top:8px' }, h('span', { class: 'pill ' + (st ? st[1] : ''), text: st ? st[0] : 'INDISPONIBLE' })),
+    h('p', { class: 'hint', style: 'margin:8px 0 0;font-size:12.5px', text: st ? `${det ? det + ' — ' : ''}vérifié à ${new Date(c.checkedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. ${c.status === 'banned' ? 'Suivi terminé.' : WATCH_NOTE}` : 'Le service n’a pas répondu. Nouvel essai automatique dans 15 min.' }));
+}
+function numberPill(c) {
+  if (!c) return h('span', { style: 'color:var(--tx3)', text: '—', title: 'Lien de groupe : statut non vérifiable' });
+  const st = CHECK_STATUS[c.status];
+  const tip = c.checkedAt ? `Vérifié le ${fmtDate(c.checkedAt)}${c.changedAt ? ` · changé le ${fmtDate(c.changedAt)}` : ''}${c.banType ? ' · ' + c.banType : ''}` : 'Première vérification en cours';
+  return h('span', { class: 'pill ' + (st ? st[1] : ''), title: tip, text: st ? st[0] : 'EN ATTENTE' });
+}
 function drawDone(box) {
   const d = S.rep.done, manual = d.mode === 'manual', ok = manual ? true : d.sent > 0;
   const cid = h('span', { text: d.caseId });
   const msg = manual
     ? 'Your email app should have opened with everything pre-filled. Send it from there to finish — keep your case number for reference.'
-    : ok ? `Emailed to ${d.sent} of ${d.total} address${d.total > 1 ? 'es' : ''}. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.';
+    : ok ? `Emailed to ${d.sent} of ${d.total} address${d.total > 1 ? 'es' : ''}. Your email app should also have opened with the same report, pre-filled, in case you want to send it yourself too. Keep your case number for reference.` : 'No email could be delivered. Please try again shortly.';
   box.append(h('div', { class: 'card done-box step-in' },
     h('div', { class: 'tick' + (ok ? '' : ' bad') }, SVG(ok ? 'check' : 'x')),
     h('h2', { text: ok ? (manual ? 'Report drafted' : 'Report submitted') : 'Report saved, not delivered' }),
     h('p', { class: 'hint', style: 'margin:8px auto 0;max-width:420px', text: msg }),
     ok ? h('p', { class: 'hint', style: 'margin:6px auto 0;max-width:420px;font-size:12px;opacity:.8', text: d.disclaimer || 'These are public support addresses, not an official Meta API — monitoring and processing are not guaranteed.' }) : null,
+    d.check ? targetStatusBlock(d.check) : null,
+    // Secours : si l'appli mail n'a pas repris l'objet/le message (ou ne s'est pas ouverte), on les montre ici copiables.
+    S.rep.mailFallback ? h('div', { class: 'card', style: 'margin:16px auto 0;max-width:420px;text-align:left;padding:14px 16px' },
+      h('p', { class: 'hint', style: 'margin:0 0 10px', text: "If your email app didn't open with everything filled in, copy it below and paste it yourself." }),
+      h('div', { style: 'margin-bottom:8px' }, h('div', { class: 'eyebrow', text: 'To' }), h('p', { style: 'margin:2px 0;font-size:13px;word-break:break-all', text: S.rep.mailFallback.to.join(', ') })),
+      h('div', { style: 'margin-bottom:8px' }, h('div', { class: 'eyebrow', text: 'Subject' }), h('p', { style: 'margin:2px 0;font-size:13px', text: S.rep.mailFallback.subject })),
+      h('div', {}, h('div', { class: 'eyebrow', text: 'Body' }), h('pre', { style: 'margin:2px 0;font-size:12.5px;white-space:pre-wrap;font-family:inherit', text: S.rep.mailFallback.body })),
+      h('button', { class: 'btn ghost sm', type: 'button', style: 'margin-top:10px', onclick: async () => { try { await navigator.clipboard.writeText(`To: ${S.rep.mailFallback.to.join(', ')}\nSubject: ${S.rep.mailFallback.subject}\n\n${S.rep.mailFallback.body}`); toast('Copied'); } catch { toast('Copy not available', true); } } }, SVG('copy'), ' Copy all')) : null,
     h('div', {}, h('div', { class: 'caseid' }, h('span', { class: 'eyebrow', text: 'CASE' }), cid,
       h('button', { class: 'btn ghost sm', type: 'button', 'aria-label': 'Copy case ID', onclick: async () => { try { await navigator.clipboard.writeText(d.caseId); toast('Case ID copied'); } catch { toast('Copy not available', true); } } }, SVG('copy')))),
     h('div', { style: 'display:flex;gap:10px;justify-content:center;flex-wrap:wrap' },
@@ -1150,16 +1249,16 @@ function drawDone(box) {
 
 /* ================================ HISTORY ================================ */
 function renderHistory(m) {
-  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'History' })), h('div', { id: 'hist' }, h('div', { class: 'list' }, h('div', { class: 'sk' }), h('div', { class: 'sk' }), h('div', { class: 'sk' }))));
+  m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'History' })), h('p', { class: 'hint', style: 'margin:-12px 0 16px', text: 'Le statut des numéros ciblés est revérifié automatiquement toutes les 15 min.' }), h('div', { id: 'hist' }, h('div', { class: 'list' }, h('div', { class: 'sk' }), h('div', { class: 'sk' }), h('div', { class: 'sk' }))));
   api('/api/reports').then((d) => {
     const box = $('hist'); if (!box) return; clear(box);
     if (!d.reports.length) return box.append(h('div', { class: 'empty' }, 'No reports yet.', h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary sm', type: 'button', onclick: () => go('report'), text: 'Create a report' }))));
     box.append(h('div', { class: 'tw' }, h('table', {},
-      h('thead', {}, h('tr', {}, ['Case ID', 'Date', 'Category', 'Severity', 'Target', 'Status'].map((t) => h('th', { text: t })))),
+      h('thead', {}, h('tr', {}, ['Case ID', 'Date', 'Category', 'Severity', 'Target', 'Status', 'Number status'].map((t) => h('th', { text: t })))),
       h('tbody', {}, d.reports.map((r) => h('tr', {},
         h('td', { data: { l: 'Case ID' }, class: 'cid', text: r.caseId || '—' }), h('td', { data: { l: 'Date' }, text: fmtDate(r.createdAt) }),
         h('td', { data: { l: 'Category' }, text: r.category }), h('td', { data: { l: 'Severity' }, text: sevLabel(r.severity) }),
-        h('td', { data: { l: 'Target' }, class: 'tg', text: r.target }), h('td', { data: { l: 'Status' } }, statusPill(r.status))))))));
+        h('td', { data: { l: 'Target' }, class: 'tg', text: r.target }), h('td', { data: { l: 'Status' } }, statusPill(r.status)), h('td', { data: { l: 'Number status' } }, numberPill(r.check))))))));
   }).catch((e) => { const box = $('hist'); if (box) { clear(box); box.append(h('div', { class: 'empty', text: e.message })); } });
 }
 
