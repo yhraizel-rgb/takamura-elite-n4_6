@@ -1,26 +1,23 @@
 {
   "name": "takamura-elite",
-  "version": "1.1.0",
-  "description": "Takamura Elite — portail de signalement avec portefeuille (recharge Money Fusion, validation admin), stockage Turso et WhatsApp Business Cloud API (envoi, webhook, console admin).",
+  "version": "1.2.0",
+  "description": "Takamura Elite — portail de signalement WhatsApp avec portefeuille (recharge Money Fusion, validation admin) et stockage Turso.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
-    "test": "node --test test/whatsapp.test.js"
+    "dev": "node --watch index.js"
   },
   "engines": {
     "node": ">=20"
   },
   "keywords": [
-    "cloud-api",
+    "takamura",
     "elite",
-    "libsql",
+    "whatsapp",
     "report",
     "signalement",
-    "takamura",
     "turso",
-    "webhook",
-    "whatsapp"
+    "libsql"
   ],
   "author": "Takamura Elite",
   "license": "MIT",

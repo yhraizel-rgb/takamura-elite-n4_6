@@ -6,8 +6,7 @@
    preuve de paiement envoyée par l'utilisateur, validation manuelle par un admin)
    + reports + history + admin.
 
-   Files: index.html, index.js, whatsapp.js, admin-whatsapp.html, package.json.
-   WhatsApp (API Cloud Meta) : whatsapp.js — console admin : /admin/whatsapp.
+   Files: index.html, index.js, package.json only.
    All secrets come from environment variables (see the ENV block below).
    ============================================================================ */
 
@@ -209,6 +208,25 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => (
 ));
 function cleanLine(v, max) { return String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max); }
 function cleanText(v, max) { return String(v ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, max); }
+// Numéro (chiffres seuls) d'une cible WhatsApp : « +237 6 12 34 56 78 », wa.me/237…, api.whatsapp.com/send?phone=237… ; '' si la cible n'en contient pas (lien de groupe).
+function targetDigits(t) {
+  const s = String(t || '').trim();
+  if (/^\+?[0-9 ()\-]{6,20}$/.test(s)) return s.replace(/\D/g, '');
+  const m = s.match(/^https?:\/\/wa\.me\/\+?(\d{6,20})/i) || s.match(/^https?:\/\/api\.whatsapp\.com\/send\/?\?(?:[^#]*&)?phone=\+?(\d{6,20})/i);
+  return m ? m[1] : '';
+}
+// Motif par défaut : contenu de yh.txt (racine du projet), relu à chaque envoi. {{NUMERO}} est remplacé par le numéro cible ;
+// si la cible n'a pas de numéro (lien de groupe), le lien api.whatsapp.com de yh.txt est remplacé par la cible telle quelle.
+function defaultMotif(waNumber) {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, 'yh.txt'), 'utf8');
+    const digits = targetDigits(waNumber);
+    const txt = digits
+      ? raw.replace(/\{\{NUMERO\}\}/g, digits)
+      : raw.replace(/https?:\/\/api\.whatsapp\.com\/send\?phone=\{\{NUMERO\}\}/g, () => String(waNumber || '')).replace(/\{\{NUMERO\}\}/g, '');
+    return cleanText(txt, 5000);
+  } catch (e) { console.error('[yh.txt]', e.message); return ''; }
+}
 const rowsAffected = (r) => Number((r && (r.rowsAffected ?? r.rows_affected)) || 0);
 async function countRows(sql, args) {
   const r = await db.execute({ sql, args });
@@ -448,7 +466,7 @@ app.use((req, res, next) => {
 // La preuve de paiement (capture d'écran encodée en base64) ne transite que sur /api/topup/request,
 // qui a donc besoin d'une limite plus large ; toutes les autres routes gardent une limite stricte.
 app.use((req, res, next) => {
-  const limit = req.path === '/api/topup/request' ? '7mb' : req.path === '/admin/wa/api/upload' ? '14mb' : '100kb';
+  const limit = req.path === '/api/topup/request' ? '7mb' : '100kb';
   express.json({ limit, verify: (r, _res, buf) => { r.rawBody = buf; } })(req, res, next);
 });
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
@@ -467,6 +485,11 @@ app.get(['/', '/index.html'], (_req, res) => {
     'Cache-Control': 'no-store',
   });
   res.type('html').send(INDEX_HTML_SRC.replaceAll('{{NONCE}}', nonce));
+});
+
+// Motif prérempli (yh.txt, numéro = cible) : le front l'insère dans le champ « Preuve », l'utilisateur peut le modifier ou compléter.
+app.get('/api/motif', (req, res) => {
+  res.set('Cache-Control', 'no-store').json({ motif: defaultMotif(cleanLine(req.query?.target, 200)) });
 });
 
 app.get('/api/config', (_req, res) => {
@@ -688,7 +711,7 @@ app.post('/api/report', limitReport, async (req, res) => {
     const category = String(req.body?.category || '');
     const severity = String(req.body?.severity || 'Modérée');
     const waNumber = cleanLine(req.body?.waNumber, 200);
-    const message = cleanText(req.body?.message, 5000);
+    const message = cleanText(req.body?.message, 5000) || defaultMotif(waNumber); // champ vide → motif automatique (yh.txt)
     if (!category || !waNumber) return res.status(400).json({ error: 'Category and target are required.' });
     if (!CATEGORIES.includes(category)) return res.status(400).json({ error: 'Invalid category.' });
     if (!SEVERITIES.includes(severity)) return res.status(400).json({ error: 'Invalid severity.' });
@@ -705,26 +728,45 @@ app.post('/api/report', limitReport, async (req, res) => {
     const caseId = newCaseId();
     const { subject, body } = reportEmailContent({ caseId, category, severity, waNumber, message });
 
+    // Mode « stream » : le front lit les étapes RÉELLES de l'envoi (une ligne JSON par événement) pour sa barre de progression.
+    const stream = mode === 'auto' && String(req.headers.accept || '').includes('application/x-ndjson');
+    const emit = (o) => { if (stream && !res.destroyed && !res.writableEnded) res.write(JSON.stringify(o) + '\n'); };
+    if (stream) {
+      res.status(200).set({ 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+      res.flushHeaders();
+      emit({ t: 'start', caseId, total: dests.length });
+    }
+
     let ok = 0;
     if (mode === 'auto') {
-      const results = await Promise.allSettled(dests.map((d) => sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination: d })));
+      let finished = 0;
+      const results = await Promise.allSettled(dests.map((d) => sendWhatsAppReport({ caseId, category, severity, waNumber, message, destination: d }).then(
+        (v) => { emit({ t: 'step', dest: d, ok: true, done: ++finished, total: dests.length }); return v; },
+        (e) => { emit({ t: 'step', dest: d, ok: false, done: ++finished, total: dests.length }); throw e; },
+      )));
       results.forEach((r, i) => { if (r.status === 'rejected') console.error('[report mail]', dests[i], r.reason && r.reason.message); });
       ok = results.filter((r) => r.status === 'fulfilled').length;
     }
     // mode === 'manual': rien n'est envoyé côté serveur — le front ouvre l'appli mail de
     // l'utilisateur (mailto:) avec le sujet/corps ci-dessous, pour un envoi depuis sa vraie adresse.
 
+    emit({ t: 'saving' });
     await db.execute({
       sql: `INSERT INTO reports (user_id, case_id, category, severity, wa_number, message, created_at, email_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [user.id, caseId, category, severity, waNumber, message, Date.now(), mode === 'manual' ? `manual/${dests.length}` : `${ok}/${dests.length}`],
     });
-    wa.notifyReportReceived(user.id, caseId, category).catch(() => {});
-    res.json({
+    const payload = {
       mode, sent: ok, total: dests.length, caseId, disclaimer: REPORT_DISCLAIMER,
       ...(mode === 'manual' ? { to: dests, subject, body } : {}),
-    });
+    };
+    if (stream) { emit({ t: 'done', ...payload }); return res.end(); }
+    res.json(payload);
   } catch (e) {
     console.error('[report]', e.message);
+    if (res.headersSent) { // flux déjà ouvert : l'erreur voyage dans le flux
+      try { if (!res.writableEnded) res.write(JSON.stringify({ t: 'error', error: 'Something went wrong. Please try again.' }) + '\n'); } catch {}
+      return res.end();
+    }
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
@@ -832,7 +874,7 @@ section[hidden]{display:none}
 <header><h1>TAKAMURA ELITE · ADMIN</h1>
 <nav role="tablist" aria-label="Sections">
 <button role="tab" aria-selected="true" data-tab="overview">Overview</button><button role="tab" aria-selected="false" data-tab="users">Users</button>
-<button role="tab" aria-selected="false" data-tab="topups">Recharges${pendingTopups ? ` (${pendingTopups})` : ''}</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button><a class="act" href="/admin/whatsapp" style="text-decoration:none;display:inline-block;margin-left:6px">WhatsApp</a></nav></header>
+<button role="tab" aria-selected="false" data-tab="topups">Recharges${pendingTopups ? ` (${pendingTopups})` : ''}</button><button role="tab" aria-selected="false" data-tab="reports">Reports</button></nav></header>
 
 <section id="t-overview">
 <div class="grid">
@@ -956,7 +998,6 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
       await db.execute({ sql: `UPDATE topups SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
       const u = await db.execute({ sql: `SELECT email FROM users WHERE id = ?`, args: [t.user_id] });
       if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'rejected', null).catch(() => {});
-      wa.notifyTopupDecision(t.user_id, 'rejected', t.amount, null).catch(() => {});
       return res.json({ ok: true });
     }
     const r = await db.execute({ sql: `UPDATE topups SET status = 'approved', decided_at = ? WHERE id = ? AND status = 'pending'`, args: [now, id] });
@@ -964,20 +1005,11 @@ app.post('/admin/topups/decision', limitAdmin, adminAuth, requireAdminXhr, async
     await db.execute({ sql: `UPDATE users SET balance = balance + ? WHERE id = ?`, args: [Number(t.amount), t.user_id] });
     const u = await db.execute({ sql: `SELECT email, balance FROM users WHERE id = ?`, args: [t.user_id] });
     if (u.rows[0]) sendTopupDecisionEmail(u.rows[0].email, t, 'approved', Number(u.rows[0].balance)).catch(() => {});
-    wa.notifyTopupDecision(t.user_id, 'approved', t.amount, u.rows[0] ? Number(u.rows[0].balance) : 0).catch(() => {});
     res.json({ ok: true, newBalance: u.rows[0] ? Number(u.rows[0].balance) : null });
   } catch (e) {
     console.error('[admin decision]', e.message);
     res.status(500).json({ error: 'Server error.' });
   }
-});
-
-/* ========================= WHATSAPP (API Cloud Meta) ======================= */
-// Envoi, webhook /webhook/whatsapp, console /admin/whatsapp, notifications du portail :
-// tout est dans whatsapp.js (valeurs en dur dedans, surchargeables par variables Railway).
-const wa = require('./whatsapp').create({
-  app, db, env, getUserFromToken, adminAuth, requireAdminXhr, limitAdmin, rateLimit,
-  walletCurrency: WALLET_CURRENCY,
 });
 
 /* ================================== ERRORS ================================= */
@@ -993,8 +1025,7 @@ app.use((err, _req, res, _next) => {
 /* ================================== BOOT =================================== */
 (async () => {
   await initDb();
-  await wa.ready();
-  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review · WhatsApp Cloud API ${wa.cfg.version})`));
+  app.listen(PORT, () => console.log(`[HTTP] Takamura Elite listening on ${PORT} (wallet mode — Money Fusion manual review)`));
 })().catch((e) => {
   console.error('[BOOT] Startup failed:', e && e.message);
   process.exit(1);

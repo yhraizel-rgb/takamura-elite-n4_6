@@ -181,7 +181,7 @@ svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .opt.cb .rd{border-radius:5px}.opt.cb[aria-checked=true] .rd{background:var(--gold)}.opt.cb[aria-checked=true] .rd::after{background:none;width:9px;height:5px;border:solid #16110a;border-width:0 0 2px 2px;border-radius:0;transform:rotate(-45deg) translate(1px,-1px)}
 .opt .t{flex:1;min-width:0}.opt .t b{display:block;font-weight:500;font-size:15px}.opt .t span{display:block;color:var(--tx3);font-size:12.5px;margin-top:2px;word-break:break-word}
 .dot{width:9px;height:9px;border-radius:50%;flex:none}
-.opts.two{grid-template-columns:1fr 1fr}
+.opts.two{grid-template-columns:1fr 1fr}.tobar{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:start;padding:12px 14px;margin-bottom:12px;border:1px solid var(--line2);border-radius:12px;background:var(--surface)}.to-l{color:var(--tx3);font-size:13.5px;line-height:34px}.to-chips{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}.to-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:3px 12px 3px 3px;border:1px solid var(--line2);border-radius:99px;background:var(--surface2);color:var(--tx);font-size:13.5px;transition:border-color .2s}.to-chip:hover{border-color:var(--gold-line)}.to-chip i{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--gold-dim);color:var(--gold2);font:500 13px/1 var(--f-ui)}.to-chip span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.to-chip b{flex:none;color:var(--tx3);font-weight:400;font-size:16px;line-height:1}.to-empty{color:var(--tx3);font-size:13px;line-height:34px}.to-all{grid-column:2;justify-self:start;padding:7px 13px;border:1px solid var(--gold-line);border-radius:99px;background:var(--gold-dim);color:var(--gold2);font-size:12.5px}
 .nav-btns{display:flex;justify-content:space-between;gap:10px;margin-top:26px}
 .sum{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
 .sum div{display:grid;grid-template-columns:110px 1fr;gap:14px;padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px}
@@ -283,6 +283,26 @@ td.tg{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .guide-tabs button{flex:none;height:30px;padding:0 12px;border-radius:99px;border:1px solid var(--line2);background:var(--surface2);color:var(--tx2);font-size:12px}
   .guide-tabs button.on{background:var(--gold-dim);border-color:var(--gold-line);color:var(--gold2)}
 }
+
+/* ===================== SEND PROGRESS (terminal) ===================== */
+.term{--g:#3dff8a;position:relative;background:#050807;border:1px solid rgba(61,255,138,.3);border-radius:12px;overflow:hidden;font-family:var(--f-mono);color:var(--g);box-shadow:0 0 38px rgba(61,255,138,.08) inset}
+.term::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.2) 0 1px,transparent 1px 3px)}
+.term-h{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid rgba(61,255,138,.18);font-size:11.5px;letter-spacing:.05em;color:#7dffb0}
+.term-h i{width:9px;height:9px;border-radius:50%;background:#14231a;border:1px solid rgba(61,255,138,.35)}
+.term-b{padding:14px 16px 16px}
+.term-log{height:176px;overflow:hidden;font-size:12.5px;line-height:1.75;word-break:break-word;display:flex;flex-direction:column;justify-content:flex-end}
+.term-log .ok{color:var(--g)}.term-log .bad{color:#ff6b6b}.term-log .dim{color:#3fae72}
+.term-row{display:flex;align-items:center;gap:12px;margin-top:14px}
+.term-bar{flex:1;height:18px;border:1px solid rgba(61,255,138,.55);padding:2px;border-radius:3px;background:#020403}
+.term-fill{height:100%;width:0;background:repeating-linear-gradient(90deg,var(--g) 0 7px,transparent 7px 9px);box-shadow:0 0 10px rgba(61,255,138,.7)}
+.term-pct{min-width:4.2ch;text-align:right;font-size:16px;font-weight:600;text-shadow:0 0 8px rgba(61,255,138,.7);font-variant-numeric:tabular-nums}
+.term-cur{height:18px;margin-top:8px;font-size:13px}
+.term-cur::after{content:"\258C";animation:term-blink 1s steps(1) infinite}
+@keyframes term-blink{50%{opacity:0}}
+.term.fail{border-color:rgba(255,107,107,.55)}
+.term.fail .term-fill{background:repeating-linear-gradient(90deg,#ff6b6b 0 7px,transparent 7px 9px);box-shadow:0 0 10px rgba(255,107,107,.6)}
+.term.fail .term-pct{color:#ff6b6b;text-shadow:none}
+@media (prefers-reduced-motion:reduce){.term-cur::after{animation:none}}
 </style>
 </head>
 <body>
@@ -864,6 +884,99 @@ function renderOverview(m) {
 }
 function stat(k, v, s) { return h('div', { class: 'card stat' }, h('span', { class: 'eyebrow', text: k.toUpperCase() }), h('strong', { text: v }), h('span', { class: 's', text: s })); }
 
+/* ===================== SEND PROGRESS (terminal-style bar) ===================== */
+// La barre suit l'envoi RÉEL : le serveur annonce chaque étape (flux JSON), l'affichage glisse vers cette cible
+// et n'atteint 100 % qu'une fois l'envoi confirmé par le serveur.
+/* PROGRESS-MODEL:BEGIN */
+function createProgress(now) {
+  now = now || (() => performance.now());
+  const st = { target: 0, shown: 0, done: false, live: false, t0: now() };
+  return {
+    state: st,
+    setTarget(p) { st.live = true; st.target = Math.max(st.target, Math.min(99, p)); },
+    finish() { st.live = true; st.done = true; st.target = 100; },
+    tick(dt) {
+      const goal = st.live ? st.target : 12 * (1 - Math.exp(-(now() - st.t0) / 900)); // « connexion » : monte doucement jusqu'à 12 %
+      st.shown += (goal - st.shown) * (1 - Math.exp(-dt / 220));
+      if (Math.abs(goal - st.shown) < 0.2) st.shown = goal;
+      if (!st.done && st.shown > 99) st.shown = 99;
+      return Math.round(st.shown);
+    },
+    get complete() { return st.done && st.shown >= 100; },
+  };
+}
+/* PROGRESS-MODEL:END */
+
+async function apiStream(path, body, onEvent) {
+  const headers = { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' };
+  if (S.token) headers['X-User-Token'] = S.token;
+  let res;
+  try { res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) }); }
+  catch { const e = new Error('Cannot reach the server. Check your connection.'); e.status = 0; throw e; }
+  if (!res.ok || !(res.headers.get('content-type') || '').includes('ndjson')) {
+    let data = null; try { data = await res.json(); } catch {}
+    if (!res.ok) { const e = new Error((data && data.error) || 'Something went wrong. Please try again.'); e.status = res.status; e.data = data; throw e; }
+    onEvent({ t: 'done', ...data }); return data; // réponse JSON classique (pas de flux)
+  }
+  let final = null;
+  const handle = (line) => {
+    line = line.trim(); if (!line) return;
+    let ev; try { ev = JSON.parse(line); } catch { return; }
+    if (ev.t === 'error') { const e = new Error(ev.error || 'Something went wrong. Please try again.'); e.status = 500; throw e; }
+    if (ev.t === 'done') final = ev;
+    onEvent(ev);
+  };
+  if (res.body && res.body.getReader) {
+    const reader = res.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i; while ((i = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+    handle(buf);
+  } else { (await res.text()).split('\n').forEach(handle); }
+  if (!final) { const e = new Error('Connection lost before the report was confirmed. Check your history before trying again.'); e.status = 0; throw e; }
+  return final;
+}
+
+function drawSendPanel(box) {
+  clear(box);
+  const pm = createProgress();
+  const log = h('div', { class: 'term-log', 'aria-live': 'polite' });
+  const fill = h('div', { class: 'term-fill' });
+  const pct = h('div', { class: 'term-pct', text: '0%' });
+  const bar = h('div', { class: 'term-bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0', 'aria-label': 'Sending report' }, fill);
+  const panel = h('div', { class: 'term step-in' },
+    h('div', { class: 'term-h' }, h('i'), h('i'), h('i'), h('span', { style: 'margin-left:6px', text: 'takamura@uplink:~$ report --send' })),
+    h('div', { class: 'term-b' }, log, h('div', { class: 'term-row' }, bar, pct), h('div', { class: 'term-cur' })));
+  box.append(panel);
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const queue = []; let stopped = false, last = performance.now(), lastLine = 0;
+  const frame = (t) => {
+    if (stopped) return;
+    const dt = Math.min(100, t - last); last = t;
+    const p = reduced ? Math.round(pm.state.live ? pm.state.target : 0) : pm.tick(dt);
+    if (reduced && pm.state.done) pm.state.shown = 100;
+    fill.style.width = p + '%'; pct.textContent = p + '%'; bar.setAttribute('aria-valuenow', String(p));
+    if (queue.length && t - lastLine > (reduced ? 0 : 130)) {
+      const [text, cls] = queue.shift(); lastLine = t;
+      log.append(h('div', { class: cls || '', text }));
+      while (log.children.length > 9) log.firstChild.remove();
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  return {
+    line(text, cls) { queue.push([text, cls]); },
+    target(p) { pm.setTarget(p); },
+    // attend que la barre ait réellement atteint 100 % et que le journal soit affiché
+    async finish() { pm.finish(); while (!stopped && (!pm.complete || queue.length)) { if (reduced) pm.state.shown = 100; await sleep(40); } await sleep(550); stopped = true; },
+    async fail() { panel.classList.add('fail'); queue.push(['> uplink interrupted', 'bad']); await sleep(900); stopped = true; },
+  };
+}
+
 /* ============================= REPORT WIZARD ============================= */
 const STEPS = ['Category', 'Severity', 'Target', 'Evidence', 'Review'];
 const WA_RE = /^(\+?[0-9 ()\-]{6,20}|https?:\/\/(wa\.me|chat\.whatsapp\.com|api\.whatsapp\.com)\/\S{1,150})$/i;
@@ -916,22 +1029,46 @@ function drawWiz() {
           h('button', { class: 'btn primary', type: 'button', onclick: () => { S.demo = false; S.rep = null; setAuthMode('login'); showView('auth'); }, text: 'Sign in to continue' })));
       return;
     }
-    ta.addEventListener('input', () => { R.message = ta.value; cnt.textContent = `${ta.value.length} / 5000`; });
+    ta.addEventListener('input', () => { R.msgEdited = true; R.message = ta.value; cnt.textContent = `${ta.value.length} / 5000`; });
+    // Motif automatique (yh.txt, numéro = cible) : prérempli tant que l'utilisateur n'a rien modifié ; il peut ensuite l'ajuster ou y ajouter son texte.
+    if (!R.msgEdited && R.motifFor !== R.target) {
+      const tgt = R.target;
+      api('/api/motif?target=' + encodeURIComponent(tgt)).then((d) => {
+        if (R.msgEdited || R.target !== tgt || !ta.isConnected) return;
+        R.motifFor = tgt; R.message = d.motif || ''; ta.value = R.message; cnt.textContent = `${ta.value.length} / 5000`;
+      }).catch(() => {});
+    }
     body.append(h('h2', { text: 'Add evidence' }), h('p', { class: 'hint', text: 'Paste the message and any context. Optional, but reports with evidence are reviewed faster.' }),
       h('div', { class: 'inp' }, ta), cnt, nav(next('Continue', () => { R.message = ta.value; R.step++; drawWiz(); })));
     setTimeout(() => ta.focus(), 60);
   } else {
     const sendBtn = h('button', { class: 'btn primary', type: 'button', id: 'submitBtn' }, h('span', { class: 'sp-label', text: 'Submit report' }));
     const mailBtn = h('button', { class: 'btn ghost', type: 'button', id: 'mailBtn' }, h('span', { class: 'sp-label', text: 'Send from your own email app' }));
+    const optBtns = [];
+    const toChips = h('div', { class: 'to-chips' });
+    const allBtn = h('button', { type: 'button', class: 'to-all' });
+    const syncDests = () => {
+      const all = S.cfg.destinations;
+      optBtns.forEach(([d, b]) => b.setAttribute('aria-checked', String(R.dests.has(d.email))));
+      toChips.replaceChildren(...all.filter((d) => R.dests.has(d.email)).map((d) =>
+        h('button', { type: 'button', class: 'to-chip', title: 'Remove', 'aria-label': `Remove ${d.email}`, onclick: () => { R.dests.delete(d.email); err.textContent = ''; syncDests(); } },
+          h('i', { text: d.email.charAt(0).toUpperCase() }), h('span', { text: d.email }), h('b', { text: '\u00d7' }))));
+      if (!R.dests.size) toChips.append(h('span', { class: 'to-empty', text: 'No support selected' }));
+      allBtn.textContent = R.dests.size === all.length ? 'Clear all' : `All supports (${all.length})`;
+    };
+    allBtn.addEventListener('click', () => { if (R.dests.size === S.cfg.destinations.length) R.dests.clear(); else S.cfg.destinations.forEach((d) => R.dests.add(d.email)); err.textContent = ''; syncDests(); });
     const destWrap = h('div', { class: 'opts' }, S.cfg.destinations.map((d) => {
-      const b = h('button', { type: 'button', class: 'opt cb', role: 'checkbox', 'aria-checked': String(R.dests.has(d.email)), onclick: () => { if (R.dests.has(d.email)) R.dests.delete(d.email); else R.dests.add(d.email); b.setAttribute('aria-checked', String(R.dests.has(d.email))); err.textContent = ''; } },
+      const b = h('button', { type: 'button', class: 'opt cb', role: 'checkbox', 'aria-checked': String(R.dests.has(d.email)), onclick: () => { if (R.dests.has(d.email)) R.dests.delete(d.email); else R.dests.add(d.email); err.textContent = ''; syncDests(); } },
         h('span', { class: 'rd' }), h('span', { class: 't' }, h('b', { text: d.note || 'WhatsApp support' }), h('span', { text: d.email })));
+      optBtns.push([d, b]);
       return b;
     }));
+    const toBar = h('div', { class: 'tobar' }, h('span', { class: 'to-l', text: 'To' }), toChips, allBtn);
+    syncDests();
     body.append(h('h2', { text: 'Review & submit' }), h('p', { class: 'hint', text: 'Choose where to send the report, then confirm the summary.' }),
       h('div', { style: 'display:flex;gap:10px;align-items:flex-start;padding:13px 15px;border-radius:11px;margin-bottom:16px;border:1px solid var(--gold-line);background:var(--gold-dim);color:var(--gold2);font-size:13px;line-height:1.5' },
         SVG('lock'), h('span', { text: S.cfg.reportDisclaimer || "This sends an email to publicly listed WhatsApp/Meta addresses. It is not an official reporting API, and delivery to a monitored inbox isn't guaranteed." })),
-      h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), destWrap,
+      h('div', { class: 'blk-t', text: 'Destinations', style: 'margin-top:0' }), toBar, destWrap,
       h('div', { class: 'blk-t', text: 'Summary' }),
       h('dl', { class: 'sum' }, ...[['Category', R.category], ['Severity', sevLabel(R.severity)], ['Target', R.target], ['Message', R.message || '—']].map(([k, v]) => h('div', {}, h('dt', { text: k }), h('dd', { text: v })))),
       err, nav(h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end' }, mailBtn, sendBtn)),
@@ -957,7 +1094,29 @@ function drawWiz() {
         err.textContent = e.message;
       }
     };
-    sendBtn.addEventListener('click', () => doSend('auto', sendBtn, 'Sending report...'));
+    // Envoi par le serveur : écran « terminal » avec barre de progression suivant les étapes réelles.
+    const doSendLive = async () => {
+      if (!R.dests.size) { err.textContent = 'Choose at least one destination.'; return; }
+      const ui = drawSendPanel(box);
+      ui.line('$ initializing secure uplink ...', 'dim');
+      try {
+        const d = await apiStream('/api/report', { category: R.category, severity: R.severity, waNumber: R.target, message: R.message, destinations: [...R.dests], mode: 'auto' }, (ev) => {
+          if (ev.t === 'start') { ui.target(18); ui.line('> session verified', 'ok'); ui.line(`> case ${ev.caseId} created`, 'ok'); ui.line(`> report packaged · ${ev.total} destination${ev.total > 1 ? 's' : ''}`, 'ok'); }
+          else if (ev.t === 'step') { ui.target(18 + (72 * ev.done) / ev.total); ui.line(`${ev.ok ? '[ OK ]' : '[FAIL]'} ${ev.dest}`, ev.ok ? 'ok' : 'bad'); }
+          else if (ev.t === 'saving') { ui.target(95); ui.line('> writing case to history ...', 'dim'); }
+          else if (ev.t === 'done') { ui.line(`> done · ${ev.sent}/${ev.total} delivered`, ev.sent ? 'ok' : 'bad'); }
+        });
+        await ui.finish();
+        try { S.me = await api('/api/me'); } catch {}
+        R.done = d; drawWiz();
+      } catch (e) {
+        await ui.fail();
+        if (e.status === 401) { forget(); return showView('auth'); }
+        if (e.status === 403) { toast(e.message, true); return route(); }
+        drawWiz(); const fe = box.querySelector('.ferr'); if (fe) fe.textContent = e.message;
+      }
+    };
+    sendBtn.addEventListener('click', doSendLive);
     mailBtn.addEventListener('click', () => doSend('manual', mailBtn, 'Opening your email app...'));
   }
 }
@@ -1034,51 +1193,6 @@ function renderSecurity(m) {
       row('Rate limiting', 'Sensitive actions are throttled to block abuse and brute force.')),
     h('div', { style: 'margin-top:22px' }, h('button', { class: 'btn', type: 'button', onclick: logout }, SVG('logout'), 'Sign out of this device')));
 }
-// Carte « Notifications WhatsApp » : le numéro est lié par un message envoyé DEPUIS ce numéro (preuve de possession + accord).
-function waCard() {
-  const box = h('div', { class: 'card', style: 'margin-top:22px' });
-  let poll = null;
-  const hint = (text) => h('p', { style: 'color:var(--tx2);font-size:14px;margin:0 0 14px', text });
-  async function load() {
-    clearInterval(poll);
-    clear(box);
-    let st;
-    try { st = await api('/api/wa/status'); } catch { box.remove(); return; }
-    if (!st.enabled) { box.remove(); return; }
-    box.append(h('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px' },
-      h('b', { text: 'Notifications WhatsApp' }), h('span', { class: 'pill ' + (st.linked ? 'ok' : 'gold'), text: st.linked ? 'LIÉ' : 'NON LIÉ' })));
-    if (st.linked) {
-      box.append(hint(`Numéro ${st.number}. Tu reçois ici tes confirmations de recharge et de signalement. Écris STOP sur WhatsApp à tout moment pour arrêter.`),
-        h('button', { class: 'btn ghost sm', type: 'button', text: 'Délier mon WhatsApp', onclick: async (e) => {
-          const b = e.currentTarget; setLoading(b, true);
-          try { await api('/api/wa/unlink', { method: 'POST' }); toast('WhatsApp délié'); load(); } catch (err) { toast(err.message, true); setLoading(b, false); }
-        } }));
-    } else {
-      box.append(hint(st.optedOut
-        ? 'Tu t’es désinscrit(e) avec STOP. Tu peux relier ton WhatsApp quand tu veux.'
-        : 'Reçois tes confirmations de recharge et de signalement sur WhatsApp. Pour prouver que le numéro est le tien et nous donner ton accord, tu nous envoies un court message depuis ce numéro.'),
-      h('button', { class: 'btn primary sm', type: 'button', text: 'Lier mon WhatsApp', onclick: start }));
-    }
-  }
-  async function start(e) {
-    const b = e.currentTarget; setLoading(b, true);
-    try {
-      const r = await api('/api/wa/link-code', { method: 'POST' });
-      clear(box).append(h('b', { text: 'Dernière étape' }),
-        hint(`Ouvre WhatsApp et envoie le message déjà rempli (code ${r.code}, valable ${r.expiresInMinutes} minutes). Cette page se met à jour toute seule.`),
-        h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' },
-          h('a', { class: 'btn primary sm', href: r.link, target: '_blank', rel: 'noopener', text: 'Ouvrir WhatsApp' }),
-          h('button', { class: 'btn ghost sm', type: 'button', text: 'J’ai envoyé le message', onclick: load })));
-      let n = 0;
-      poll = setInterval(async () => {
-        if (!box.isConnected || ++n > 200) { clearInterval(poll); return; }
-        try { const st = await api('/api/wa/status'); if (st.linked) { toast('WhatsApp lié ✓'); load(); } } catch {}
-      }, 4500);
-    } catch (err) { toast(err.message, true); setLoading(b, false); }
-  }
-  load();
-  return box;
-}
 function renderAccount(m) {
   m.append(h('div', { class: 'pagehead' }, h('h1', { text: 'Account' }), h('span', { class: 'pill ok', text: S.me.hasAccess ? 'ACTIF' : 'SOLDE INSUFFISANT' })),
     h('div', { class: 'kv' },
@@ -1086,7 +1200,6 @@ function renderAccount(m) {
       h('span', { text: 'Solde' }), h('b', { text: `${fmtMoney(S.me.balance)} FCFA` }),
       h('span', { text: 'Membre depuis' }), h('b', { text: S.me.user.createdAt ? fmtDay(S.me.user.createdAt) : '—' }),
       h('span', { text: 'Reports' }), h('b', { text: String(S.me.reports || 0) })),
-    waCard(),
     h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-top:22px' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => go('wallet'), text: 'Gérer mon portefeuille' }),
       h('button', { class: 'btn ghost', type: 'button', onclick: enterGuide, text: "Voir le guide d'utilisation" }),
